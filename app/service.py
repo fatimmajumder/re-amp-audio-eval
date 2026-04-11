@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import fmean
 
 from .artifacts import get_artifact_path, write_run_artifacts
-from .demo_data import build_catalog, build_seed_payloads, resolve_scenarios
+from .demo_data import (
+    build_catalog,
+    build_seed_payloads,
+    build_seed_workspaces,
+    resolve_dataset_name,
+    resolve_scenarios,
+)
 from .evaluation import evaluate_payload
-from .repository import RunRepository
+from .public_datasets import build_public_datasets, get_public_dataset
+from .repository import RunRepository, WorkspaceRepository
 from .schemas import (
     BenchmarkRun,
     CompareResponse,
@@ -16,6 +24,8 @@ from .schemas import (
     RecentRunEntry,
     RunCreate,
     ScenarioDelta,
+    WorkspaceCreate,
+    WorkspaceRecord,
 )
 
 
@@ -24,14 +34,33 @@ def utc_now() -> datetime:
 
 
 class RunService:
-    def __init__(self, repository: RunRepository, artifacts_root: Path):
+    def __init__(
+        self,
+        repository: RunRepository,
+        workspace_repository: WorkspaceRepository,
+        artifacts_root: Path,
+        datasets_root: Path,
+    ):
         self.repository = repository
+        self.workspace_repository = workspace_repository
         self.artifacts_root = artifacts_root
+        self.datasets_root = datasets_root
         self.artifacts_root.mkdir(parents=True, exist_ok=True)
-        self.catalog = build_catalog()
+        self.datasets_root.mkdir(parents=True, exist_ok=True)
+
+    def ensure_seed_workspaces(self) -> None:
+        if self.workspace_repository.list_workspaces():
+            self._refresh_all_workspace_stats()
+            return
+
+        for workspace in build_seed_workspaces():
+            self.workspace_repository.save_workspace(workspace)
+        self._refresh_all_workspace_stats()
 
     def ensure_seed_data(self) -> None:
+        self.ensure_seed_workspaces()
         if self.repository.list_runs():
+            self._refresh_all_workspace_stats()
             return
 
         for payload in build_seed_payloads():
@@ -39,7 +68,33 @@ class RunService:
             self.execute_run(run.run_id)
 
     def get_catalog(self):
-        return self.catalog
+        return build_catalog(public_datasets=self.list_public_datasets())
+
+    def list_public_datasets(self):
+        return build_public_datasets(self.datasets_root)
+
+    def list_workspaces(self) -> list[WorkspaceRecord]:
+        return self.workspace_repository.list_workspaces()
+
+    def create_workspace(self, payload: WorkspaceCreate) -> WorkspaceRecord:
+        slug = _slugify(payload.name)
+        base_slug = slug
+        index = 2
+        while self.workspace_repository.get_workspace(slug):
+            slug = f"{base_slug}-{index}"
+            index += 1
+
+        workspace = WorkspaceRecord(
+            workspace_id=slug,
+            name=payload.name,
+            description=payload.description,
+            owner=payload.owner,
+            focus_areas=payload.focus_areas,
+            default_benchmark=payload.default_benchmark,
+            default_model=payload.default_model,
+            dataset_preferences=payload.dataset_preferences,
+        )
+        return self.workspace_repository.save_workspace(workspace)
 
     def list_runs(self) -> list[BenchmarkRun]:
         return self.repository.list_runs()
@@ -48,22 +103,43 @@ class RunService:
         return self.repository.get_run(run_id)
 
     def create_run(self, payload: RunCreate, *, source_run_id: str | None = None) -> BenchmarkRun:
-        resolved_payload = payload.model_copy(update={"scenarios": resolve_scenarios(payload)})
+        resolved_payload = payload.model_copy(
+            update={
+                "scenarios": resolve_scenarios(payload),
+                "dataset_name": resolve_dataset_name(payload),
+            }
+        )
         if not resolved_payload.scenarios:
             raise ValueError("at least one scenario is required to create a run")
+
+        workspace = self._resolve_workspace(resolved_payload.workspace_id)
+        public_dataset = None
+        dataset_name = resolved_payload.dataset_name
+        dataset_source_url = None
+        if resolved_payload.public_dataset_id:
+            public_dataset = get_public_dataset(self.datasets_root, resolved_payload.public_dataset_id)
+            if not public_dataset:
+                raise ValueError(f"unknown public dataset: {resolved_payload.public_dataset_id}")
+            dataset_name = public_dataset.name
+            dataset_source_url = public_dataset.source_url
 
         run = BenchmarkRun(
             benchmark_name=resolved_payload.benchmark_name,
             model_name=resolved_payload.model_name,
-            dataset_name=resolved_payload.dataset_name,
+            dataset_name=dataset_name,
             seed=resolved_payload.seed,
             notes=resolved_payload.notes,
+            workspace_id=workspace.workspace_id,
+            workspace_name=workspace.name,
+            public_dataset_id=resolved_payload.public_dataset_id,
+            dataset_source_url=dataset_source_url,
             scenarios=[scenario.model_copy(deep=True) for scenario in resolved_payload.scenarios],
             source_run_id=source_run_id,
             status="queued",
             progress=5,
         )
         self.repository.save_run(run)
+        self._refresh_workspace_stats(workspace.workspace_id)
         return run
 
     def execute_run(self, run_id: str) -> BenchmarkRun:
@@ -74,6 +150,8 @@ class RunService:
             dataset_name=existing.dataset_name,
             seed=existing.seed,
             notes=existing.notes,
+            workspace_id=existing.workspace_id,
+            public_dataset_id=existing.public_dataset_id,
             scenarios=[scenario.model_copy(deep=True) for scenario in existing.scenarios],
         )
 
@@ -89,13 +167,18 @@ class RunService:
 
         try:
             bundle = evaluate_payload(payload, run_id)
+            public_dataset = (
+                get_public_dataset(self.datasets_root, existing.public_dataset_id)
+                if existing.public_dataset_id
+                else None
+            )
             artifacts = write_run_artifacts(
                 self.artifacts_root,
-                run_id,
-                payload,
+                running,
                 bundle.summary,
                 bundle.results,
                 bundle.slices,
+                public_dataset=public_dataset,
             )
             final_status = "replayed" if existing.source_run_id else "completed"
             completed = running.model_copy(
@@ -112,6 +195,7 @@ class RunService:
                 deep=True,
             )
             self.repository.save_run(completed)
+            self._refresh_workspace_stats(completed.workspace_id)
             return completed
         except Exception as exc:
             failed = running.model_copy(
@@ -124,6 +208,7 @@ class RunService:
                 deep=True,
             )
             self.repository.save_run(failed)
+            self._refresh_workspace_stats(failed.workspace_id)
             raise
 
     def replay_run(self, run_id: str) -> BenchmarkRun:
@@ -134,6 +219,8 @@ class RunService:
             dataset_name=source.dataset_name,
             seed=source.seed,
             notes=f"Replay of {source.run_id}",
+            workspace_id=source.workspace_id,
+            public_dataset_id=source.public_dataset_id,
             scenarios=[scenario.model_copy(deep=True) for scenario in source.scenarios],
         )
         replay = self.create_run(payload, source_run_id=source.run_id)
@@ -205,10 +292,7 @@ class RunService:
         active_runs = [run for run in runs if run.status in {"queued", "running"}]
 
         if terminal_runs:
-            average_score = round(
-                fmean(run.summary.aggregate_score for run in terminal_runs if run.summary),
-                4,
-            )
+            average_score = round(fmean(run.summary.aggregate_score for run in terminal_runs if run.summary), 4)
             average_latency_ms = round(
                 fmean(run.summary.average_latency_ms for run in terminal_runs if run.summary),
                 1,
@@ -247,6 +331,7 @@ class RunService:
                 run_id=run.run_id,
                 benchmark_name=run.benchmark_name,
                 model_name=run.model_name,
+                workspace_name=run.workspace_name,
                 status=run.status,
                 aggregate_score=run.summary.aggregate_score if run.summary else None,
                 created_at=run.created_at,
@@ -262,22 +347,62 @@ class RunService:
             average_latency_ms=average_latency_ms,
             best_model_name=best_model_name,
             best_score=best_score,
-            leaderboard=leaderboard[:5],
+            workspace_count=len(self.workspace_repository.list_workspaces()),
+            public_dataset_count=len(self.list_public_datasets()),
+            leaderboard=leaderboard,
             recent_runs=recent_runs,
         )
 
+    def get_artifact_path(self, run_id: str, filename: str) -> Path:
+        self.require_run(run_id)
+        return get_artifact_path(self.artifacts_root, run_id, filename)
+
     def require_run(self, run_id: str) -> BenchmarkRun:
-        run = self.get_run(run_id)
+        run = self.repository.get_run(run_id)
         if not run:
             raise KeyError(run_id)
         return run
 
     def require_completed_run(self, run_id: str) -> BenchmarkRun:
         run = self.require_run(run_id)
-        if run.status not in {"completed", "replayed"} or not run.summary:
+        if not run.summary or run.status not in {"completed", "replayed"}:
             raise ValueError(run_id)
         return run
 
-    def get_artifact_path(self, run_id: str, filename: str) -> Path:
-        self.require_run(run_id)
-        return get_artifact_path(self.artifacts_root, run_id, filename)
+    def _resolve_workspace(self, workspace_id: str | None) -> WorkspaceRecord:
+        self.ensure_seed_workspaces()
+        if workspace_id:
+            workspace = self.workspace_repository.get_workspace(workspace_id)
+            if not workspace:
+                raise ValueError(f"unknown workspace: {workspace_id}")
+            return workspace
+
+        available = self.workspace_repository.list_workspaces()
+        if not available:
+            raise ValueError("no workspaces available")
+        return available[0]
+
+    def _refresh_all_workspace_stats(self) -> None:
+        for workspace in self.workspace_repository.list_workspaces():
+            self._refresh_workspace_stats(workspace.workspace_id)
+
+    def _refresh_workspace_stats(self, workspace_id: str) -> None:
+        workspace = self.workspace_repository.get_workspace(workspace_id)
+        if not workspace:
+            return
+
+        runs = [run for run in self.repository.list_runs() if run.workspace_id == workspace_id]
+        last_run_at = max((run.created_at for run in runs), default=None)
+        updated = workspace.model_copy(
+            update={
+                "run_count": len(runs),
+                "last_run_at": last_run_at,
+            },
+            deep=True,
+        )
+        self.workspace_repository.save_workspace(updated)
+
+
+def _slugify(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return cleaned or "workspace"

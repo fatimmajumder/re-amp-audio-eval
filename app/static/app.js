@@ -2,6 +2,7 @@ const state = {
   catalog: null,
   overview: null,
   runs: [],
+  workspaces: [],
   activeRunId: null,
   compareResult: null
 };
@@ -9,6 +10,8 @@ const state = {
 const elements = {
   benchmarkSelect: document.getElementById("benchmark-select"),
   modelSelect: document.getElementById("model-select"),
+  workspaceSelect: document.getElementById("workspace-select"),
+  publicDatasetSelect: document.getElementById("public-dataset-select"),
   datasetInput: document.getElementById("dataset-input"),
   seedInput: document.getElementById("seed-input"),
   notesInput: document.getElementById("notes-input"),
@@ -16,6 +19,12 @@ const elements = {
   scenarioCount: document.getElementById("scenario-count"),
   runForm: document.getElementById("run-form"),
   formFeedback: document.getElementById("form-feedback"),
+  workspaceForm: document.getElementById("workspace-form"),
+  workspaceNameInput: document.getElementById("workspace-name-input"),
+  workspaceOwnerInput: document.getElementById("workspace-owner-input"),
+  workspaceDescriptionInput: document.getElementById("workspace-description-input"),
+  workspaceFocusInput: document.getElementById("workspace-focus-input"),
+  workspaceFeedback: document.getElementById("workspace-feedback"),
   compareLeft: document.getElementById("compare-left"),
   compareRight: document.getElementById("compare-right"),
   compareButton: document.getElementById("compare-button"),
@@ -26,7 +35,11 @@ const elements = {
   detailContent: document.getElementById("detail-content"),
   leaderboard: document.getElementById("leaderboard"),
   recentRuns: document.getElementById("recent-runs"),
+  datasetsList: document.getElementById("datasets-list"),
+  workspacesList: document.getElementById("workspaces-list"),
   heroRunCount: document.getElementById("hero-run-count"),
+  heroWorkspaceCount: document.getElementById("hero-workspace-count"),
+  heroDatasetCount: document.getElementById("hero-dataset-count"),
   metricAverageScore: document.getElementById("metric-average-score"),
   metricAverageLatency: document.getElementById("metric-average-latency"),
   metricBestModel: document.getElementById("metric-best-model"),
@@ -60,6 +73,10 @@ function formatLatency(value) {
 }
 
 function formatDate(value) {
+  if (!value) {
+    return "n/a";
+  }
+
   return new Date(value).toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -88,7 +105,10 @@ function renderScenarioGrid(templateName) {
     (item) => item.benchmark_name === templateName
   );
   const defaults = new Set(template?.default_scenarios || []);
-  elements.datasetInput.value = template?.dataset_name || "";
+
+  if (!elements.publicDatasetSelect.value) {
+    elements.datasetInput.value = template?.dataset_name || "";
+  }
 
   elements.scenarioGrid.innerHTML = "";
   state.catalog.scenario_library.forEach((scenario) => {
@@ -131,7 +151,108 @@ function renderCatalog() {
     .map((model) => `<option value="${model.name}">${model.name}</option>`)
     .join("");
 
+  elements.publicDatasetSelect.innerHTML = [
+    `<option value="">Use template or custom dataset label</option>`,
+    ...state.catalog.public_datasets.map(
+      (dataset) => `<option value="${dataset.dataset_id}">${dataset.name}</option>`
+    )
+  ].join("");
+
   renderScenarioGrid(elements.benchmarkSelect.value);
+  renderDatasets();
+}
+
+function renderWorkspaceSelect() {
+  const previousValue = elements.workspaceSelect.value;
+  elements.workspaceSelect.innerHTML = state.workspaces
+    .map(
+      (workspace) => `<option value="${workspace.workspace_id}">${workspace.name}</option>`
+    )
+    .join("");
+
+  if (state.workspaces.some((workspace) => workspace.workspace_id === previousValue)) {
+    elements.workspaceSelect.value = previousValue;
+  }
+}
+
+function renderDatasets() {
+  if (!state.catalog) {
+    return;
+  }
+
+  elements.datasetsList.innerHTML = state.catalog.public_datasets
+    .map((dataset) => {
+      const availabilityClass =
+        dataset.availability.status === "downloaded" ? "status-ready" : "status-remote";
+      const availabilityCopy =
+        dataset.availability.status === "downloaded"
+          ? `${dataset.availability.audio_file_count} local files`
+          : dataset.access_mode === "direct"
+            ? "remote, ready to download"
+            : dataset.access_mode === "request"
+              ? "documented access flow"
+              : "metadata-driven source";
+      const sampleFiles =
+        dataset.availability.sample_files.length > 0
+          ? `<p class="dataset-samples">sample: ${dataset.availability.sample_files.join(", ")}</p>`
+          : "";
+      return `
+        <article class="dataset-card">
+          <div class="dataset-card-top">
+            <div>
+              <h4>${dataset.name}</h4>
+              <p>${dataset.provider} · ${dataset.domain}</p>
+            </div>
+            <span class="status-chip ${availabilityClass}">${availabilityCopy}</span>
+          </div>
+          <p>${dataset.description}</p>
+          <div class="dataset-meta">
+            <span class="tag">${dataset.download_size}</span>
+            <span class="tag">${dataset.license_name}</span>
+            <span class="tag">${dataset.access_mode}</span>
+          </div>
+          <p class="dataset-notes">${dataset.notes.join(" ")}</p>
+          ${sampleFiles}
+          <div class="dataset-links">
+            <a class="artifact-link" href="${dataset.source_url}" target="_blank" rel="noreferrer">Source</a>
+            <a class="artifact-link" href="${dataset.download_url}" target="_blank" rel="noreferrer">Download</a>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderWorkspaces() {
+  if (!state.workspaces.length) {
+    elements.workspacesList.innerHTML =
+      '<div class="empty-state">No workspaces yet. Create one to organize evaluation lanes.</div>';
+    return;
+  }
+
+  elements.workspacesList.innerHTML = state.workspaces
+    .map(
+      (workspace) => `
+        <article class="workspace-card">
+          <div class="workspace-card-top">
+            <div>
+              <h4>${workspace.name}</h4>
+              <p>${workspace.owner}</p>
+            </div>
+            <span class="tag">${workspace.run_count} runs</span>
+          </div>
+          <p>${workspace.description}</p>
+          <div class="workspace-focuses">
+            ${workspace.focus_areas.map((focus) => `<span class="tag">${focus}</span>`).join("")}
+          </div>
+          <div class="workspace-meta">
+            <span>default benchmark: ${workspace.default_benchmark || "custom"}</span>
+            <span>last run: ${formatDate(workspace.last_run_at)}</span>
+          </div>
+        </article>
+      `
+    )
+    .join("");
 }
 
 function renderOverview() {
@@ -141,6 +262,8 @@ function renderOverview() {
   }
 
   elements.heroRunCount.textContent = `${overview.total_runs} runs tracked`;
+  elements.heroWorkspaceCount.textContent = `${overview.workspace_count} workspaces`;
+  elements.heroDatasetCount.textContent = `${overview.public_dataset_count} datasets`;
   elements.metricAverageScore.textContent = formatScore(overview.average_score);
   elements.metricAverageLatency.textContent = formatLatency(overview.average_latency_ms);
   elements.metricBestModel.textContent = overview.best_model_name || "n/a";
@@ -175,6 +298,7 @@ function renderOverview() {
                 <div>
                   <strong>${run.model_name}</strong>
                   <p>${run.benchmark_name}</p>
+                  <p>${run.workspace_name}</p>
                 </div>
                 <div>
                   <span>${run.aggregate_score ? formatScore(run.aggregate_score) : run.status}</span>
@@ -212,9 +336,13 @@ function renderRunList() {
             <span class="status-badge" data-status="${run.status}">${run.status}</span>
           </div>
           <div class="run-card-meta">
+            <span class="tag">${run.workspace_name}</span>
             <span class="tag">${run.dataset_name}</span>
             <span class="tag">seed ${run.seed}</span>
-            <span class="tag">${run.scenarios.length} scenarios</span>
+          </div>
+          <div class="run-card-meta">
+            <span>${run.scenarios.length} scenarios</span>
+            <span>${run.public_dataset_id || "custom dataset"}</span>
           </div>
           <div class="run-card-meta">
             <span>score ${score}</span>
@@ -229,6 +357,26 @@ function renderRunList() {
       `;
     })
     .join("");
+}
+
+function renderArtifactPreview(artifact) {
+  if (artifact.artifact_type === "spectrogram" || artifact.artifact_type === "waveform") {
+    return `
+      <div class="artifact-preview">
+        <img src="${artifact.download_url}" alt="${artifact.label}" loading="lazy" />
+      </div>
+    `;
+  }
+
+  if (artifact.artifact_type === "audio_preview") {
+    return `
+      <div class="artifact-preview">
+        <audio controls preload="none" src="${artifact.download_url}"></audio>
+      </div>
+    `;
+  }
+
+  return "";
 }
 
 function renderRunDetail() {
@@ -293,6 +441,7 @@ function renderRunDetail() {
           <div>
             <strong>${artifact.label}</strong>
             <p>${artifact.description}</p>
+            ${renderArtifactPreview(artifact)}
           </div>
           <div>
             <span class="artifact-kind">${artifact.artifact_type}</span>
@@ -313,8 +462,10 @@ function renderRunDetail() {
           <h4>${run.summary.headline}</h4>
         </div>
         <div class="detail-metadata">
+          <span>workspace ${run.workspace_name}</span>
           <span>created ${formatDate(run.created_at)}</span>
           <span>${run.scenarios.length} scenarios</span>
+          ${run.public_dataset_id ? `<span>public dataset ${run.public_dataset_id}</span>` : ""}
           ${run.source_run_id ? `<span>replay of ${run.source_run_id.slice(0, 8)}</span>` : ""}
         </div>
       </div>
@@ -329,6 +480,10 @@ function renderRunDetail() {
             `
           )
           .join("")}
+      </div>
+      <div class="detail-metadata detail-links">
+        <span>dataset label ${run.dataset_name}</span>
+        ${run.dataset_source_url ? `<a class="artifact-link" href="${run.dataset_source_url}" target="_blank" rel="noreferrer">Source dataset</a>` : ""}
       </div>
       <div class="slice-grid">${slices}</div>
       <div class="scenario-table">${scenarios}</div>
@@ -411,13 +566,15 @@ function renderCompare() {
 }
 
 async function refreshDashboard() {
-  const [overview, runs] = await Promise.all([
+  const [overview, runs, workspaces] = await Promise.all([
     fetchJson("/api/overview"),
-    fetchJson("/api/runs")
+    fetchJson("/api/runs"),
+    fetchJson("/api/workspaces")
   ]);
 
   state.overview = overview;
   state.runs = runs;
+  state.workspaces = workspaces;
 
   if (!state.activeRunId && runs.length) {
     state.activeRunId = runs[0].run_id;
@@ -425,6 +582,8 @@ async function refreshDashboard() {
     state.activeRunId = runs[0]?.run_id || null;
   }
 
+  renderWorkspaceSelect();
+  renderWorkspaces();
   renderOverview();
   renderRunList();
   renderRunDetail();
@@ -440,7 +599,9 @@ async function createRun(event) {
   const scenarioMap = new Map(
     state.catalog.scenario_library.map((scenario) => [scenario.name, scenario])
   );
-  const scenarios = getSelectedScenarioNames().map((name) => scenarioMap.get(name));
+  const scenarios = getSelectedScenarioNames()
+    .map((name) => scenarioMap.get(name))
+    .filter(Boolean);
 
   try {
     elements.formFeedback.textContent = "Queueing evaluation...";
@@ -450,6 +611,8 @@ async function createRun(event) {
       body: JSON.stringify({
         benchmark_name: elements.benchmarkSelect.value,
         model_name: elements.modelSelect.value,
+        workspace_id: elements.workspaceSelect.value,
+        public_dataset_id: elements.publicDatasetSelect.value || null,
         dataset_name: elements.datasetInput.value || template?.dataset_name || "",
         seed: Number(elements.seedInput.value),
         notes: elements.notesInput.value.trim(),
@@ -463,6 +626,36 @@ async function createRun(event) {
     await refreshDashboard();
   } catch (error) {
     elements.formFeedback.textContent = error.message;
+  }
+}
+
+async function createWorkspace(event) {
+  event.preventDefault();
+
+  const focusAreas = elements.workspaceFocusInput.value
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  try {
+    elements.workspaceFeedback.textContent = "Creating workspace...";
+    await fetchJson("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: elements.workspaceNameInput.value.trim(),
+        owner: elements.workspaceOwnerInput.value.trim() || "Fatim Majumder",
+        description: elements.workspaceDescriptionInput.value.trim(),
+        focus_areas: focusAreas
+      })
+    });
+
+    elements.workspaceForm.reset();
+    elements.workspaceOwnerInput.value = "Fatim Majumder";
+    elements.workspaceFeedback.textContent = "Workspace saved.";
+    await refreshDashboard();
+  } catch (error) {
+    elements.workspaceFeedback.textContent = error.message;
   }
 }
 
@@ -503,11 +696,30 @@ async function compareRuns() {
   }
 }
 
+function syncPublicDatasetSelection() {
+  const datasetId = elements.publicDatasetSelect.value;
+  if (!datasetId || !state.catalog) {
+    const template = state.catalog?.benchmark_templates.find(
+      (item) => item.benchmark_name === elements.benchmarkSelect.value
+    );
+    elements.datasetInput.value = template?.dataset_name || "";
+    return;
+  }
+
+  const dataset = state.catalog.public_datasets.find((item) => item.dataset_id === datasetId);
+  if (dataset) {
+    elements.datasetInput.value = dataset.name;
+  }
+}
+
 function attachEventListeners() {
   elements.benchmarkSelect.addEventListener("change", (event) => {
     renderScenarioGrid(event.target.value);
+    syncPublicDatasetSelection();
   });
+  elements.publicDatasetSelect.addEventListener("change", syncPublicDatasetSelection);
   elements.runForm.addEventListener("submit", createRun);
+  elements.workspaceForm.addEventListener("submit", createWorkspace);
   elements.compareButton.addEventListener("click", compareRuns);
 
   elements.runsList.addEventListener("click", async (event) => {

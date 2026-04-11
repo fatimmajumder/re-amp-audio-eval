@@ -147,7 +147,8 @@ textarea {
 .status-badge,
 .subheader-row span:first-child,
 .detail-metadata span,
-.empty-state {
+.empty-state,
+.workspace-meta span {
   color: var(--text-soft);
 }
 
@@ -184,7 +185,9 @@ textarea {
 .pill-link:hover,
 .pill-link:focus-visible,
 .run-card:hover,
-.run-card:focus-visible {
+.run-card:focus-visible,
+.dataset-card:hover,
+.workspace-card:hover {
   transform: translateY(-1px);
   border-color: var(--line-strong);
   background: rgba(125, 181, 255, 0.08);
@@ -200,8 +203,8 @@ textarea {
 
 .hero-panel h2 {
   max-width: 13ch;
-  font-size: clamp(2.8rem, 5vw, 4.6rem);
-  line-height: 0.95;
+  font-size: clamp(2.6rem, 5vw, 4.4rem);
+  line-height: 0.98;
 }
 
 .hero-text {
@@ -269,7 +272,9 @@ textarea {
 .runs-panel,
 .details-panel,
 .leaderboard-panel,
-.activity-panel {
+.activity-panel,
+.datasets-panel,
+.workspace-library-panel {
   padding: 24px;
 }
 
@@ -282,7 +287,10 @@ textarea {
 .detail-summary,
 .artifact-list li,
 .recent-run,
-.leaderboard-row {
+.leaderboard-row,
+.dataset-card-top,
+.workspace-card-top,
+.dataset-links {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -298,14 +306,16 @@ textarea {
 }
 
 .run-form,
-.compare-form {
+.compare-form,
+.workspace-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
 .run-form label,
-.compare-form label {
+.compare-form label,
+.workspace-form label {
   display: grid;
   gap: 8px;
   color: var(--text-soft);
@@ -372,11 +382,12 @@ textarea:focus {
 }
 
 .scenario-pill p,
-.scenario-pill small,
 .compare-output p,
 .detail-content p,
 .artifact-list li p,
-.recent-run p {
+.recent-run p,
+.dataset-card p,
+.workspace-card p {
   margin: 0;
   color: var(--text-soft);
   line-height: 1.65;
@@ -435,7 +446,9 @@ textarea:focus {
 .detail-content,
 .leaderboard,
 .recent-runs,
-.runs-list {
+.runs-list,
+.datasets-list,
+.workspaces-list {
   display: grid;
   gap: 12px;
 }
@@ -451,11 +464,20 @@ textarea:focus {
 .detail-card,
 .run-card,
 .leaderboard-row,
-.recent-run {
+.recent-run,
+.dataset-card,
+.workspace-card {
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.run-card,
+.dataset-card,
+.workspace-card {
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
 }
 
 .run-card {
@@ -469,20 +491,26 @@ textarea:focus {
 
 .run-card h4,
 .detail-card h4,
-.compare-card h4 {
+.compare-card h4,
+.dataset-card h4,
+.workspace-card h4 {
   margin: 0;
   font-size: 1rem;
 }
 
 .run-card-meta,
-.detail-metadata {
+.detail-metadata,
+.dataset-meta,
+.workspace-focuses,
+.workspace-meta {
   margin-top: 8px;
   flex-wrap: wrap;
 }
 
 .status-badge,
 .tag,
-.artifact-kind {
+.artifact-kind,
+.status-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -523,6 +551,21 @@ textarea:focus {
 .artifact-kind {
   color: var(--accent-2);
   border-color: rgba(255, 155, 113, 0.26);
+}
+
+.status-chip {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.status-ready {
+  color: var(--success);
+  border-color: rgba(113, 240, 209, 0.24);
+}
+
+.status-remote {
+  color: var(--warning);
+  border-color: rgba(255, 211, 110, 0.24);
 }
 
 .artifact-link {
@@ -619,7 +662,8 @@ textarea:focus {
 .summary-item span,
 .slice-row span,
 .scenario-row span,
-.recent-run span {
+.recent-run span,
+.workspace-meta span {
   color: var(--text-soft);
   font-size: 0.9rem;
 }
@@ -645,6 +689,32 @@ textarea:focus {
   list-style: none;
   padding: 0;
   margin: 14px 0 0;
+}
+
+.artifact-preview {
+  margin-top: 12px;
+}
+
+.artifact-preview img,
+.artifact-preview audio {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.detail-links {
+  margin-bottom: 14px;
+}
+
+.dataset-notes,
+.dataset-samples {
+  margin-top: 10px;
+}
+
+.dataset-links {
+  margin-top: 12px;
+  justify-content: flex-start;
 }
 
 .leaderboard-row {
@@ -682,7 +752,9 @@ textarea:focus {
   .leaderboard-row,
   .recent-run,
   .delta-row,
-  .scenario-row {
+  .scenario-row,
+  .dataset-card-top,
+  .workspace-card-top {
     grid-template-columns: 1fr;
   }
 
@@ -696,6 +768,7 @@ textarea:focus {
 
   .run-form,
   .compare-form,
+  .workspace-form,
   .scenario-grid,
   .summary-grid,
   .slice-grid,

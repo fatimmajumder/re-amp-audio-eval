@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from .schemas import BenchmarkScenario, BenchmarkTemplate, CatalogResponse, ModelCard, RunCreate
+from .schemas import (
+    BenchmarkScenario,
+    BenchmarkTemplate,
+    CatalogResponse,
+    ModelCard,
+    PublicDataset,
+    RunCreate,
+    WorkspaceRecord,
+)
 
 SCENARIO_LIBRARY = [
     BenchmarkScenario(
@@ -133,11 +141,12 @@ MODEL_CARDS = [
 ]
 
 
-def build_catalog() -> CatalogResponse:
+def build_catalog(public_datasets: list[PublicDataset] | None = None) -> CatalogResponse:
     return CatalogResponse(
         benchmark_templates=BENCHMARK_TEMPLATES,
         models=MODEL_CARDS,
         scenario_library=SCENARIO_LIBRARY,
+        public_datasets=public_datasets or [],
     )
 
 
@@ -173,26 +182,76 @@ def resolve_scenarios(payload: RunCreate) -> list[BenchmarkScenario]:
     return resolved
 
 
+def resolve_dataset_name(payload: RunCreate) -> str:
+    if payload.dataset_name:
+        return payload.dataset_name
+
+    template_lookup = {template.benchmark_name: template for template in BENCHMARK_TEMPLATES}
+    template = template_lookup.get(payload.benchmark_name)
+    return template.dataset_name if template else "synthetic-acoustic-suite"
+
+
+def build_seed_workspaces() -> list[WorkspaceRecord]:
+    return [
+        WorkspaceRecord(
+            workspace_id="core-audio-lab",
+            name="Core Audio Lab",
+            description="Primary sandbox for day-to-day robustness sweeps and dashboard QA.",
+            owner="Fatim Majumder",
+            focus_areas=["regression triage", "prompt adherence", "artifact drift"],
+            default_benchmark="audio_robustness_suite",
+            default_model="reamp-studio-alpha",
+            dataset_preferences=["mini_speech_commands", "librispeech_test_clean"],
+        ),
+        WorkspaceRecord(
+            workspace_id="music-evaluation",
+            name="Music Evaluation",
+            description="Long-form mix and mastering workspace tuned for music-generation stress tests.",
+            owner="Fatim Majumder",
+            focus_areas=["stereo image", "mastering polish", "tempo drift"],
+            default_benchmark="studio_mix_stability",
+            default_model="reamp-studio-beta",
+            dataset_preferences=["maestro", "musdb18_hq"],
+        ),
+        WorkspaceRecord(
+            workspace_id="speech-red-team",
+            name="Speech Red Team",
+            description="Speech-first lane for overlap, noise contamination, and command robustness checks.",
+            owner="Fatim Majumder",
+            focus_areas=["speaker overlap", "noisy speech", "keyword failures"],
+            default_benchmark="dialogue_and_foley",
+            default_model="audioforge-ensemble",
+            dataset_preferences=["mini_speech_commands", "fsd50k", "audioset"],
+        ),
+    ]
+
+
 def build_seed_payloads() -> list[RunCreate]:
     return [
         RunCreate(
             benchmark_name="audio_robustness_suite",
             model_name="reamp-studio-alpha",
-            dataset_name="synthetic-acoustic-suite",
+            dataset_name="Mini Speech Commands",
+            public_dataset_id="mini_speech_commands",
+            workspace_id="core-audio-lab",
             seed=7,
             notes="Seeded baseline for dashboard exploration.",
         ),
         RunCreate(
             benchmark_name="studio_mix_stability",
             model_name="reamp-studio-beta",
-            dataset_name="multitrack-room-shifts",
+            dataset_name="MAESTRO",
+            public_dataset_id="maestro",
+            workspace_id="music-evaluation",
             seed=11,
             notes="Higher-capacity candidate run focused on mastering robustness.",
         ),
         RunCreate(
             benchmark_name="dialogue_and_foley",
             model_name="audioforge-ensemble",
-            dataset_name="foley-scene-slices",
+            dataset_name="FSD50K",
+            public_dataset_id="fsd50k",
+            workspace_id="speech-red-team",
             seed=19,
             notes="External comparison model with stronger artifact control.",
         ),

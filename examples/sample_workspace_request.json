@@ -1,0 +1,6 @@
+{
+  "name": "Speech QA Sprint",
+  "description": "Short-turn workspace for overlap and noisy speech regressions.",
+  "owner": "Fatim Majumder",
+  "focus_areas": ["speaker overlap", "background noise", "latency"]
+}

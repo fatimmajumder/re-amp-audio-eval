@@ -6,14 +6,17 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .repository import RunRepository
+from .repository import RunRepository, WorkspaceRepository
 from .schemas import (
     BenchmarkRun,
     CatalogResponse,
     CompareRequest,
     CompareResponse,
     OverviewResponse,
+    PublicDataset,
     RunCreate,
+    WorkspaceCreate,
+    WorkspaceRecord,
 )
 from .service import RunService
 
@@ -21,7 +24,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DATA_DIR = BASE_DIR / "data"
 DEFAULT_STORAGE = DATA_DIR / "runs.json"
+DEFAULT_WORKSPACE_STORAGE = DATA_DIR / "workspaces.json"
 ARTIFACTS_DIR = DATA_DIR / "artifacts"
+PUBLIC_DATASETS_DIR = DATA_DIR / "public_datasets"
 
 
 def get_service(request: Request) -> RunService:
@@ -29,15 +34,21 @@ def get_service(request: Request) -> RunService:
 
 
 def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True) -> FastAPI:
-    repository = RunRepository(storage_path or DEFAULT_STORAGE)
-    artifacts_root = (storage_path.parent / "artifacts") if storage_path else ARTIFACTS_DIR
-    run_service = RunService(repository, artifacts_root)
+    run_storage_path = storage_path or DEFAULT_STORAGE
+    workspace_storage_path = run_storage_path.parent / "workspaces.json" if storage_path else DEFAULT_WORKSPACE_STORAGE
+    artifacts_root = (run_storage_path.parent / "artifacts") if storage_path else ARTIFACTS_DIR
+    datasets_root = (run_storage_path.parent / "public_datasets") if storage_path else PUBLIC_DATASETS_DIR
+
+    repository = RunRepository(run_storage_path)
+    workspace_repository = WorkspaceRepository(workspace_storage_path)
+    run_service = RunService(repository, workspace_repository, artifacts_root, datasets_root)
+    run_service.ensure_seed_workspaces()
     if seed_demo_data:
         run_service.ensure_seed_data()
 
     app = FastAPI(
         title="RE-AMP",
-        version="1.0.0",
+        version="2.0.0",
         description="Full-stack generative audio robustness evaluation dashboard.",
     )
     app.state.run_service = run_service
@@ -54,6 +65,21 @@ def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True)
     @app.get("/api/catalog", response_model=CatalogResponse)
     def get_catalog(service: RunService = Depends(get_service)) -> CatalogResponse:
         return service.get_catalog()
+
+    @app.get("/api/public-datasets", response_model=list[PublicDataset])
+    def list_public_datasets(service: RunService = Depends(get_service)) -> list[PublicDataset]:
+        return service.list_public_datasets()
+
+    @app.get("/api/workspaces", response_model=list[WorkspaceRecord])
+    def list_workspaces(service: RunService = Depends(get_service)) -> list[WorkspaceRecord]:
+        return service.list_workspaces()
+
+    @app.post("/api/workspaces", response_model=WorkspaceRecord)
+    def create_workspace(
+        payload: WorkspaceCreate,
+        service: RunService = Depends(get_service),
+    ) -> WorkspaceRecord:
+        return service.create_workspace(payload)
 
     @app.get("/api/overview", response_model=OverviewResponse)
     def get_overview(service: RunService = Depends(get_service)) -> OverviewResponse:

@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 RunStatus = Literal["queued", "running", "completed", "replayed", "failed"]
 Difficulty = Literal["easy", "medium", "hard"]
 Modality = Literal["audio", "multimodal"]
+DatasetAccessMode = Literal["direct", "request", "streaming"]
+DatasetAvailabilityStatus = Literal["remote", "downloaded"]
 
 
 def utc_now() -> datetime:
@@ -29,12 +31,64 @@ class BenchmarkScenario(AppModel):
     weight: float = 1.0
 
 
+class DatasetAvailability(AppModel):
+    status: DatasetAvailabilityStatus = "remote"
+    local_path: str | None = None
+    manifest_path: str | None = None
+    downloaded_at: datetime | None = None
+    audio_file_count: int = 0
+    sample_files: list[str] = Field(default_factory=list)
+
+
+class PublicDataset(AppModel):
+    dataset_id: str
+    name: str
+    domain: str
+    provider: str
+    description: str
+    source_url: str
+    download_url: str
+    license_name: str
+    access_mode: DatasetAccessMode = "direct"
+    download_size: str
+    tasks: list[str] = Field(default_factory=list)
+    recommended_benchmarks: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    availability: DatasetAvailability = Field(default_factory=DatasetAvailability)
+
+
+class WorkspaceCreate(AppModel):
+    name: str
+    description: str
+    owner: str = "RE-AMP Team"
+    focus_areas: list[str] = Field(default_factory=list)
+    default_benchmark: str = ""
+    default_model: str = ""
+    dataset_preferences: list[str] = Field(default_factory=list)
+
+
+class WorkspaceRecord(AppModel):
+    workspace_id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    name: str
+    description: str
+    owner: str = "RE-AMP Team"
+    focus_areas: list[str] = Field(default_factory=list)
+    default_benchmark: str = ""
+    default_model: str = ""
+    dataset_preferences: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+    last_run_at: datetime | None = None
+    run_count: int = 0
+
+
 class RunCreate(AppModel):
     benchmark_name: str
     model_name: str
-    dataset_name: str = "synthetic-acoustic-suite"
+    dataset_name: str = ""
     seed: int = 7
     notes: str = ""
+    workspace_id: str | None = None
+    public_dataset_id: str | None = None
     scenarios: list[BenchmarkScenario] = Field(default_factory=list)
 
 
@@ -60,7 +114,7 @@ class SliceScore(AppModel):
 
 class ArtifactRecord(AppModel):
     label: str
-    artifact_type: Literal["report", "spectrogram", "logs", "manifest"]
+    artifact_type: Literal["report", "spectrogram", "waveform", "audio_preview", "logs", "manifest"]
     path: str
     download_url: str = ""
     size_kb: float
@@ -85,6 +139,10 @@ class BenchmarkRun(AppModel):
     dataset_name: str
     seed: int
     notes: str = ""
+    workspace_id: str = "core-audio-lab"
+    workspace_name: str = "Core Audio Lab"
+    public_dataset_id: str | None = None
+    dataset_source_url: str | None = None
     scenarios: list[BenchmarkScenario] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
@@ -119,12 +177,14 @@ class CatalogResponse(AppModel):
     benchmark_templates: list[BenchmarkTemplate]
     models: list[ModelCard]
     scenario_library: list[BenchmarkScenario]
+    public_datasets: list[PublicDataset] = Field(default_factory=list)
 
 
 class RecentRunEntry(AppModel):
     run_id: str
     benchmark_name: str
     model_name: str
+    workspace_name: str
     status: RunStatus
     aggregate_score: float | None = None
     created_at: datetime
@@ -145,6 +205,8 @@ class OverviewResponse(AppModel):
     average_latency_ms: float
     best_model_name: str
     best_score: float
+    workspace_count: int = 0
+    public_dataset_count: int = 0
     leaderboard: list[LeaderboardEntry] = Field(default_factory=list)
     recent_runs: list[RecentRunEntry] = Field(default_factory=list)
 

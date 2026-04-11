@@ -4,4 +4,6 @@ __pycache__/
 .env
 .pytest_cache/
 data/runs.json
+data/workspaces.json
 data/artifacts/
+data/public_datasets/

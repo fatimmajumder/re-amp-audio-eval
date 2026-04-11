@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="RE-AMP is a full-stack dashboard for benchmarking generative audio models across robustness, latency, and artifact resilience."
+      content="RE-AMP is a full-stack dashboard for benchmarking generative audio models across robustness, latency, artifact resilience, public datasets, and saved workspaces."
     />
     <title>RE-AMP | Generative Audio Robustness Evaluation</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,11 +39,12 @@
         <section class="hero-panel glass-panel">
           <div class="hero-copy">
             <p class="eyebrow">Generative Audio Robustness Evaluation</p>
-            <h2>Benchmark models across artifact risk, timing stability, and acoustic stressors.</h2>
+            <h2>Benchmark models against real-world audio stressors with saved workspaces and public dataset hooks.</h2>
             <p class="hero-text">
-              RE-AMP simulates the kind of benchmarking infrastructure used to evaluate
-              generative audio systems in production: queued runs, deterministic scoring,
-              replay, run comparison, artifact manifests, and a live dashboard layered on top.
+              RE-AMP simulates product-grade evaluation infrastructure for generative audio:
+              queued runs, deterministic scoring, replay, run comparison, public dataset
+              registry, persisted workspaces, downloadable artifacts, and a dashboard
+              designed for research operations instead of one-off demos.
             </p>
           </div>
 
@@ -53,12 +54,12 @@
               <strong id="hero-run-count">0 runs tracked</strong>
             </div>
             <div class="signal-box">
-              <span>Storage</span>
-              <strong>JSON-backed persistent registry</strong>
+              <span>Saved workspaces</span>
+              <strong id="hero-workspace-count">0 workspaces</strong>
             </div>
             <div class="signal-box">
-              <span>Execution model</span>
-              <strong>Queued API + background scoring</strong>
+              <span>Public datasets</span>
+              <strong id="hero-dataset-count">0 datasets</strong>
             </div>
           </div>
         </section>
@@ -87,6 +88,52 @@
         </section>
 
         <section class="workspace-grid">
+          <section class="datasets-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Datasets</p>
+                <h3>Public evaluation sources</h3>
+              </div>
+              <span class="mono-tag">GET /api/public-datasets</span>
+            </div>
+            <div id="datasets-list" class="datasets-list"></div>
+          </section>
+
+          <section class="workspace-library-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Workspaces</p>
+                <h3>Saved evaluation lanes</h3>
+              </div>
+              <span class="mono-tag">POST /api/workspaces</span>
+            </div>
+            <form id="workspace-form" class="workspace-form">
+              <label>
+                <span>Name</span>
+                <input id="workspace-name-input" type="text" placeholder="Speech QA Sprint" required />
+              </label>
+              <label>
+                <span>Owner</span>
+                <input id="workspace-owner-input" type="text" value="Fatim Majumder" />
+              </label>
+              <label class="full-width">
+                <span>Description</span>
+                <textarea id="workspace-description-input" rows="2" placeholder="What is this workspace optimizing for?" required></textarea>
+              </label>
+              <label class="full-width">
+                <span>Focus areas</span>
+                <input id="workspace-focus-input" type="text" placeholder="speaker overlap, latency, mastering polish" />
+              </label>
+              <div class="full-width form-actions">
+                <button class="secondary-button" type="submit">Create workspace</button>
+                <p id="workspace-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+              </div>
+            </form>
+            <div id="workspaces-list" class="workspaces-list"></div>
+          </section>
+        </section>
+
+        <section class="workspace-grid">
           <section class="composer-panel glass-panel">
             <div class="section-header">
               <div>
@@ -98,6 +145,10 @@
 
             <form id="run-form" class="run-form">
               <label>
+                <span>Workspace</span>
+                <select id="workspace-select" required></select>
+              </label>
+              <label>
                 <span>Benchmark</span>
                 <select id="benchmark-select" required></select>
               </label>
@@ -106,7 +157,11 @@
                 <select id="model-select" required></select>
               </label>
               <label>
-                <span>Dataset</span>
+                <span>Public dataset</span>
+                <select id="public-dataset-select"></select>
+              </label>
+              <label>
+                <span>Dataset label</span>
                 <input id="dataset-input" type="text" required />
               </label>
               <label>
@@ -182,7 +237,7 @@
 
             <div id="detail-content" class="detail-content empty-state">
               Choose a run from the registry to inspect its scenario results, slice
-              scores, and generated artifacts.
+              scores, generated artifacts, and public dataset context.
             </div>
           </section>
         </section>
