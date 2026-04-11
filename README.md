@@ -11,6 +11,8 @@ persistence, replayable benchmark jobs, scenario-level comparison, generated
 waveform and spectrogram artifacts, and a public dataset registry with
 downloader tooling.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/fatimmajumder/re-amp-audio-eval)
+
 ## What the project demonstrates
 
 - benchmark orchestration with queued, running, completed, replayed, and failed
@@ -102,7 +104,8 @@ flowchart LR
   for smoke tests
 - `tests/test_api.py` covers the core API workflow
 - `examples/` contains sample payloads for runs and workspaces
-- `docker-compose.yml`, `Procfile`, and `render.yaml` ship the deployment story
+- `docker-compose.yml`, `Procfile`, `render.yaml`, and `render.fullstack.yaml`
+  ship the deployment story
 
 ## Quickstart
 
@@ -193,16 +196,48 @@ This repo includes multiple deployment surfaces:
 
 - `docker-compose.yml` for a local three-service stack
 - `Procfile` for platforms that map `web` and `worker` process types
-- `render.yaml` for a one-blueprint deployment with a web service, worker
-  service, and managed Postgres
+- `render.yaml` for the easiest public demo deployment on Render
+- `render.fullstack.yaml` for a `web + worker + postgres` Render topology
 
-For hosted deployments, set:
+### Fastest path to a public demo URL
+
+The Deploy to Render button above uses `render.yaml`, which is intentionally set
+up as a single web service:
+
+- Docker runtime
+- free web plan
+- `/health` health check
+- inline workers enabled
+- JSON-backed storage for a lightweight portfolio demo
+
+This is the best option when you want a public `.onrender.com` URL quickly and
+don’t need durable production storage.
+
+### Full-stack Render topology
+
+If you want the heavier cloud setup, use `render.fullstack.yaml` instead. That
+blueprint provisions:
+
+- a web service
+- a dedicated worker service
+- a managed Postgres instance
+
+For the full-stack deployment, set:
 
 - `DATABASE_URL`
 - `REAMP_STORAGE_BACKEND=database`
 - `REAMP_INLINE_WORKERS=false`
 - `REAMP_WORKER_COUNT=2`
 - `REAMP_WORKER_POLL_INTERVAL=1.0`
+
+Render’s Docker blueprint fields used here map cleanly to the app:
+
+- `runtime: docker`
+- `healthCheckPath: /health`
+- `dockerCommand` only for the worker because the web service can use the
+  `CMD` already defined in the `Dockerfile`
+- `autoDeployTrigger: off` so button-based deploys don’t auto-redeploy every
+  cloned instance
 
 ## Example run request
 

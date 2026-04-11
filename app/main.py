@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .repository import build_repositories
+from .repository import RunRepository, WorkspaceRepository
 from .schemas import (
     BenchmarkRun,
     CatalogResponse,
@@ -16,74 +15,43 @@ from .schemas import (
     OverviewResponse,
     PublicDataset,
     RunCreate,
-    SystemStatusResponse,
     WorkspaceCreate,
     WorkspaceRecord,
 )
 from .service import RunService
-from .settings import Settings
-from .worker import RunWorkerPool
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+DATA_DIR = BASE_DIR / "data"
+DEFAULT_STORAGE = DATA_DIR / "runs.json"
+DEFAULT_WORKSPACE_STORAGE = DATA_DIR / "workspaces.json"
+ARTIFACTS_DIR = DATA_DIR / "artifacts"
+PUBLIC_DATASETS_DIR = DATA_DIR / "public_datasets"
 
 
 def get_service(request: Request) -> RunService:
     return request.app.state.run_service
 
 
-def create_app(
-    storage_path: Path | None = None,
-    *,
-    seed_demo_data: bool = True,
-    database_url: str | None = None,
-    inline_worker_enabled: bool | None = None,
-) -> FastAPI:
-    settings = Settings.from_env(
-        BASE_DIR,
-        storage_path=storage_path,
-        database_url=database_url,
-        inline_worker_enabled=inline_worker_enabled,
-    )
-    repository, workspace_repository = build_repositories(settings)
-    run_service = RunService(
-        repository,
-        workspace_repository,
-        settings.artifacts_dir,
-        settings.public_datasets_dir,
-        settings,
-    )
+def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True) -> FastAPI:
+    run_storage_path = storage_path or DEFAULT_STORAGE
+    workspace_storage_path = run_storage_path.parent / "workspaces.json" if storage_path else DEFAULT_WORKSPACE_STORAGE
+    artifacts_root = (run_storage_path.parent / "artifacts") if storage_path else ARTIFACTS_DIR
+    datasets_root = (run_storage_path.parent / "public_datasets") if storage_path else PUBLIC_DATASETS_DIR
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        run_service.ensure_seed_workspaces()
-        if seed_demo_data:
-            run_service.ensure_seed_data()
-        run_service.recover_incomplete_runs()
-
-        worker_pool = None
-        if settings.inline_worker_enabled:
-            worker_pool = RunWorkerPool(
-                run_service,
-                worker_count=settings.worker_count,
-                poll_interval_seconds=settings.worker_poll_interval_seconds,
-            )
-            worker_pool.start()
-
-        app.state.worker_pool = worker_pool
-        yield
-
-        if worker_pool:
-            worker_pool.stop()
+    repository = RunRepository(run_storage_path)
+    workspace_repository = WorkspaceRepository(workspace_storage_path)
+    run_service = RunService(repository, workspace_repository, artifacts_root, datasets_root)
+    run_service.ensure_seed_workspaces()
+    if seed_demo_data:
+        run_service.ensure_seed_data()
 
     app = FastAPI(
         title="RE-AMP",
-        version="3.0.0",
-        description="Production-shaped generative audio robustness evaluation dashboard.",
-        lifespan=lifespan,
+        version="2.0.0",
+        description="Full-stack generative audio robustness evaluation dashboard.",
     )
     app.state.run_service = run_service
-    app.state.settings = settings
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -91,17 +59,8 @@ def create_app(
         return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/health")
-    def health(service: RunService = Depends(get_service)) -> dict[str, object]:
-        status = service.get_system_status()
-        return {
-            "status": "ok",
-            "storage_backend": status.storage_backend,
-            "inline_worker_enabled": status.inline_worker_enabled,
-        }
-
-    @app.get("/api/system", response_model=SystemStatusResponse)
-    def get_system_status(service: RunService = Depends(get_service)) -> SystemStatusResponse:
-        return service.get_system_status()
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/api/catalog", response_model=CatalogResponse)
     def get_catalog(service: RunService = Depends(get_service)) -> CatalogResponse:
@@ -133,12 +92,15 @@ def create_app(
     @app.post("/api/runs", response_model=BenchmarkRun)
     def create_run(
         payload: RunCreate,
+        background_tasks: BackgroundTasks,
         service: RunService = Depends(get_service),
     ) -> BenchmarkRun:
         try:
-            return service.create_run(payload)
+            run = service.create_run(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        background_tasks.add_task(service.execute_run, run.run_id)
+        return run
 
     @app.get("/api/runs/{run_id}", response_model=BenchmarkRun)
     def get_run(run_id: str, service: RunService = Depends(get_service)) -> BenchmarkRun:
@@ -150,14 +112,18 @@ def create_app(
     @app.post("/api/runs/{run_id}/replay", response_model=BenchmarkRun)
     def replay_run(
         run_id: str,
+        background_tasks: BackgroundTasks,
         service: RunService = Depends(get_service),
     ) -> BenchmarkRun:
         try:
-            return service.replay_run(run_id)
+            replay = service.replay_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        background_tasks.add_task(service.execute_run, replay.run_id)
+        return replay
 
     @app.post("/api/compare", response_model=CompareResponse)
     def compare_runs(

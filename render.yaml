@@ -1,38 +1,17 @@
 services:
   - type: web
     name: re-amp-web
-    env: docker
+    runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: off
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: re-amp-db
-          property: connectionString
       - key: REAMP_STORAGE_BACKEND
-        value: database
+        value: json
       - key: REAMP_INLINE_WORKERS
-        value: "false"
+        value: "true"
       - key: REAMP_WORKER_COUNT
         value: "2"
       - key: REAMP_WORKER_POLL_INTERVAL
         value: "1.0"
-  - type: worker
-    name: re-amp-worker
-    env: docker
-    dockerfilePath: ./Dockerfile
-    dockerCommand: python scripts/run_worker.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: re-amp-db
-          property: connectionString
-      - key: REAMP_STORAGE_BACKEND
-        value: database
-      - key: REAMP_INLINE_WORKERS
-        value: "false"
-      - key: REAMP_WORKER_COUNT
-        value: "2"
-      - key: REAMP_WORKER_POLL_INTERVAL
-        value: "1.0"
-databases:
-  - name: re-amp-db
