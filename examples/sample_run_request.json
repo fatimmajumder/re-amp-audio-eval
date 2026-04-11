@@ -1,0 +1,17 @@
+{
+  "benchmark_name": "audio_robustness_suite",
+  "model_name": "demo-audio-model-v1",
+  "seed": 11,
+  "scenarios": [
+    {
+      "name": "reverb_shift",
+      "difficulty": "medium",
+      "modality": "audio"
+    },
+    {
+      "name": "background_noise",
+      "difficulty": "hard",
+      "modality": "audio"
+    }
+  ]
+}
