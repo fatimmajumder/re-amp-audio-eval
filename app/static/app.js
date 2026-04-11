@@ -1,10 +1,12 @@
 const state = {
   catalog: null,
   overview: null,
+  system: null,
   runs: [],
   workspaces: [],
   activeRunId: null,
-  compareResult: null
+  compareResult: null,
+  workspaceDefaultsHydrated: false
 };
 
 const elements = {
@@ -40,10 +42,14 @@ const elements = {
   heroRunCount: document.getElementById("hero-run-count"),
   heroWorkspaceCount: document.getElementById("hero-workspace-count"),
   heroDatasetCount: document.getElementById("hero-dataset-count"),
+  heroFeedback: document.getElementById("hero-feedback"),
   metricAverageScore: document.getElementById("metric-average-score"),
   metricAverageLatency: document.getElementById("metric-average-latency"),
   metricBestModel: document.getElementById("metric-best-model"),
-  metricActiveRuns: document.getElementById("metric-active-runs")
+  metricActiveRuns: document.getElementById("metric-active-runs"),
+  runtimeChip: document.getElementById("runtime-chip"),
+  guidedDemoButton: document.getElementById("guided-demo-button"),
+  speechRedTeamButton: document.getElementById("speech-red-team-button")
 };
 
 async function fetchJson(url, options = {}) {
@@ -162,6 +168,22 @@ function renderCatalog() {
   renderDatasets();
 }
 
+function getWorkspaceById(workspaceId) {
+  return state.workspaces.find((workspace) => workspace.workspace_id === workspaceId) || null;
+}
+
+function getPreferredDatasetId(workspace) {
+  if (!workspace || !state.catalog) {
+    return "";
+  }
+
+  return (
+    workspace.dataset_preferences.find((datasetId) =>
+      state.catalog.public_datasets.some((dataset) => dataset.dataset_id === datasetId)
+    ) || ""
+  );
+}
+
 function renderWorkspaceSelect() {
   const previousValue = elements.workspaceSelect.value;
   elements.workspaceSelect.innerHTML = state.workspaces
@@ -172,6 +194,39 @@ function renderWorkspaceSelect() {
 
   if (state.workspaces.some((workspace) => workspace.workspace_id === previousValue)) {
     elements.workspaceSelect.value = previousValue;
+  }
+}
+
+function applyWorkspaceDefaults(workspaceId, { announce = false } = {}) {
+  const workspace = getWorkspaceById(workspaceId);
+  if (!workspace || !state.catalog) {
+    return;
+  }
+
+  if (
+    workspace.default_benchmark &&
+    state.catalog.benchmark_templates.some(
+      (template) => template.benchmark_name === workspace.default_benchmark
+    )
+  ) {
+    elements.benchmarkSelect.value = workspace.default_benchmark;
+  }
+
+  renderScenarioGrid(elements.benchmarkSelect.value);
+
+  if (
+    workspace.default_model &&
+    state.catalog.models.some((model) => model.name === workspace.default_model)
+  ) {
+    elements.modelSelect.value = workspace.default_model;
+  }
+
+  const preferredDatasetId = getPreferredDatasetId(workspace);
+  elements.publicDatasetSelect.value = preferredDatasetId;
+  syncPublicDatasetSelection();
+
+  if (announce && elements.heroFeedback) {
+    elements.heroFeedback.textContent = `Loaded ${workspace.name} defaults into the benchmark composer.`;
   }
 }
 
@@ -308,6 +363,18 @@ function renderOverview() {
             `
           )
           .join("");
+}
+
+function renderSystemStatus() {
+  if (!state.system || !elements.runtimeChip) {
+    return;
+  }
+
+  const backendLabel = state.system.storage_backend === "database" ? "Postgres-ready" : "JSON mode";
+  const workerLabel = state.system.inline_worker_enabled
+    ? `${state.system.worker_count} inline worker${state.system.worker_count === 1 ? "" : "s"}`
+    : `${state.system.worker_count} external worker${state.system.worker_count === 1 ? "" : "s"}`;
+  elements.runtimeChip.textContent = `${backendLabel} · ${workerLabel}`;
 }
 
 function renderRunList() {
@@ -566,15 +633,17 @@ function renderCompare() {
 }
 
 async function refreshDashboard() {
-  const [overview, runs, workspaces] = await Promise.all([
+  const [overview, runs, workspaces, system] = await Promise.all([
     fetchJson("/api/overview"),
     fetchJson("/api/runs"),
-    fetchJson("/api/workspaces")
+    fetchJson("/api/workspaces"),
+    fetchJson("/api/system")
   ]);
 
   state.overview = overview;
   state.runs = runs;
   state.workspaces = workspaces;
+  state.system = system;
 
   if (!state.activeRunId && runs.length) {
     state.activeRunId = runs[0].run_id;
@@ -583,16 +652,19 @@ async function refreshDashboard() {
   }
 
   renderWorkspaceSelect();
+  if (!state.workspaceDefaultsHydrated && state.workspaces.length) {
+    applyWorkspaceDefaults(elements.workspaceSelect.value || state.workspaces[0].workspace_id);
+    state.workspaceDefaultsHydrated = true;
+  }
   renderWorkspaces();
   renderOverview();
+  renderSystemStatus();
   renderRunList();
   renderRunDetail();
   renderCompare();
 }
 
-async function createRun(event) {
-  event.preventDefault();
-
+function buildRunPayload(overrides = {}) {
   const template = state.catalog.benchmark_templates.find(
     (item) => item.benchmark_name === elements.benchmarkSelect.value
   );
@@ -603,30 +675,101 @@ async function createRun(event) {
     .map((name) => scenarioMap.get(name))
     .filter(Boolean);
 
-  try {
-    elements.formFeedback.textContent = "Queueing evaluation...";
-    const run = await fetchJson("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        benchmark_name: elements.benchmarkSelect.value,
-        model_name: elements.modelSelect.value,
-        workspace_id: elements.workspaceSelect.value,
-        public_dataset_id: elements.publicDatasetSelect.value || null,
-        dataset_name: elements.datasetInput.value || template?.dataset_name || "",
-        seed: Number(elements.seedInput.value),
-        notes: elements.notesInput.value.trim(),
-        scenarios
-      })
-    });
+  return {
+    benchmark_name: elements.benchmarkSelect.value,
+    model_name: elements.modelSelect.value,
+    workspace_id: elements.workspaceSelect.value,
+    public_dataset_id: elements.publicDatasetSelect.value || null,
+    dataset_name: elements.datasetInput.value || template?.dataset_name || "",
+    seed: Number(elements.seedInput.value),
+    notes: elements.notesInput.value.trim(),
+    scenarios,
+    ...overrides
+  };
+}
 
-    state.activeRunId = run.run_id;
-    state.compareResult = null;
-    elements.formFeedback.textContent = `Queued ${run.run_id.slice(0, 8)}. Background scoring is running.`;
-    await refreshDashboard();
+async function queueRun(payload, feedbackElement, pendingCopy, successCopy) {
+  feedbackElement.textContent = pendingCopy;
+  const run = await fetchJson("/api/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  state.activeRunId = run.run_id;
+  state.compareResult = null;
+  feedbackElement.textContent = `${successCopy} ${run.run_id.slice(0, 8)}. Background scoring is running.`;
+  await refreshDashboard();
+  return run;
+}
+
+async function createRun(event) {
+  event.preventDefault();
+
+  try {
+    await queueRun(
+      buildRunPayload(),
+      elements.formFeedback,
+      "Queueing evaluation...",
+      "Queued"
+    );
   } catch (error) {
     elements.formFeedback.textContent = error.message;
   }
+}
+
+async function launchGuidedDemoRun() {
+  try {
+    const preferredWorkspaceId = state.workspaces.some(
+      (workspace) => workspace.workspace_id === "speech-red-team"
+    )
+      ? "speech-red-team"
+      : state.workspaces[0]?.workspace_id;
+    if (!preferredWorkspaceId) {
+      throw new Error("No workspace is available yet. Refresh the page and try again.");
+    }
+
+    elements.workspaceSelect.value = preferredWorkspaceId;
+    applyWorkspaceDefaults(preferredWorkspaceId);
+    elements.seedInput.value = "23";
+    elements.notesInput.value =
+      "Guided demo run across overlap, noise, and command robustness stress.";
+
+    const payload = buildRunPayload();
+    const run = await queueRun(
+      payload,
+      elements.heroFeedback,
+      "Queueing a guided demo run...",
+      "Demo run queued"
+    );
+    document
+      .querySelector(".runs-panel")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    state.activeRunId = run.run_id;
+    renderRunList();
+    renderRunDetail();
+  } catch (error) {
+    elements.heroFeedback.textContent = error.message;
+  }
+}
+
+function focusSpeechRedTeamLane() {
+  const preferredWorkspaceId = state.workspaces.some(
+    (workspace) => workspace.workspace_id === "speech-red-team"
+  )
+    ? "speech-red-team"
+    : state.workspaces[0]?.workspace_id;
+  if (!preferredWorkspaceId) {
+    elements.heroFeedback.textContent = "No workspace is available yet. Refresh the page and try again.";
+    return;
+  }
+
+  elements.workspaceSelect.value = preferredWorkspaceId;
+  applyWorkspaceDefaults(preferredWorkspaceId, { announce: true });
+  elements.notesInput.value = "Investigating speech overlap and noise regression risk.";
+  document
+    .querySelector(".composer-panel")
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function createWorkspace(event) {
@@ -717,10 +860,15 @@ function attachEventListeners() {
     renderScenarioGrid(event.target.value);
     syncPublicDatasetSelection();
   });
+  elements.workspaceSelect.addEventListener("change", (event) => {
+    applyWorkspaceDefaults(event.target.value, { announce: true });
+  });
   elements.publicDatasetSelect.addEventListener("change", syncPublicDatasetSelection);
   elements.runForm.addEventListener("submit", createRun);
   elements.workspaceForm.addEventListener("submit", createWorkspace);
   elements.compareButton.addEventListener("click", compareRuns);
+  elements.guidedDemoButton.addEventListener("click", launchGuidedDemoRun);
+  elements.speechRedTeamButton.addEventListener("click", focusSpeechRedTeamLane);
 
   elements.runsList.addEventListener("click", async (event) => {
     const replayButton = event.target.closest("[data-replay-id]");

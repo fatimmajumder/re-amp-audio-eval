@@ -30,6 +30,7 @@
           </div>
         </div>
         <div class="topbar-links">
+          <span class="pill-link" id="runtime-chip">Runtime: loading</span>
           <a class="pill-link" href="https://github.com/fatimmajumder/re-amp-audio-eval" target="_blank" rel="noreferrer">GitHub Repo</a>
           <a class="pill-link" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
         </div>
@@ -45,6 +46,13 @@
               queued runs, deterministic scoring, replay, run comparison, public dataset
               registry, persisted workspaces, downloadable artifacts, and a dashboard
               designed for research operations instead of one-off demos.
+            </p>
+            <div class="hero-actions">
+              <button class="primary-button" type="button" id="guided-demo-button">Launch guided demo run</button>
+              <button class="secondary-button" type="button" id="speech-red-team-button">Load speech red-team lane</button>
+            </div>
+            <p id="hero-feedback" class="form-feedback hero-feedback" role="status" aria-live="polite">
+              Use the guided flow to queue a speech robustness benchmark in one click.
             </p>
           </div>
 

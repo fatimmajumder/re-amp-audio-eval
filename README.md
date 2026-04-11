@@ -39,6 +39,8 @@ The frontend at `/` includes:
 
 - a launch form for benchmark composition with workspace and public dataset
   selection
+- guided demo buttons that preload the speech red-team lane and queue a
+  benchmark run in one click
 - live metrics for average score, latency, best model, and active queue depth
 - a public dataset registry with official source links and local-download status
 - saved workspaces with persistent run counts
@@ -102,6 +104,7 @@ flowchart LR
 - `app/static/` contains the frontend dashboard
 - `scripts/download_public_dataset.py` downloads direct-access public datasets
   for smoke tests
+- `scripts/smoke_hosted_demo.py` smoke-tests a deployed app end to end
 - `tests/test_api.py` covers the core API workflow
 - `examples/` contains sample payloads for runs and workspaces
 - `docker-compose.yml`, `Procfile`, `render.yaml`, and `render.fullstack.yaml`
@@ -131,6 +134,11 @@ load. Runtime outputs are written to:
 
 For local dev, RE-AMP defaults to JSON-backed storage with inline workers
 enabled. Queued jobs complete automatically inside the web process.
+
+On first load, the dashboard also includes:
+
+- `Launch guided demo run` to queue a speech robustness benchmark immediately
+- `Load speech red-team lane` to preload the most compelling workspace defaults
 
 ## Production-style runtime
 
@@ -212,6 +220,12 @@ up as a single web service:
 
 This is the best option when you want a public `.onrender.com` URL quickly and
 don’t need durable production storage.
+
+After Render gives you the URL, you can verify the hosted app from your machine:
+
+```bash
+python scripts/smoke_hosted_demo.py https://your-app.onrender.com
+```
 
 ### Full-stack Render topology
 
