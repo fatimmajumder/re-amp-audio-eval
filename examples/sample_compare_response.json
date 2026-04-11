@@ -1,6 +1,25 @@
 {
   "left_run_id": "baseline_run",
   "right_run_id": "candidate_run",
+  "left_label": "reamp-studio-alpha · audio_robustness_suite",
+  "right_label": "reamp-studio-beta · audio_robustness_suite",
   "score_delta": 0.0412,
-  "verdict": "right run materially improves robustness"
+  "verdict": "right run materially improves robustness",
+  "headline": "Largest movement appears in speaker_overlap.",
+  "scenario_deltas": [
+    {
+      "scenario_name": "speaker_overlap",
+      "left_score": 0.612,
+      "right_score": 0.683,
+      "delta": 0.071,
+      "trend": "improved"
+    },
+    {
+      "scenario_name": "pitch_drift",
+      "left_score": 0.694,
+      "right_score": 0.705,
+      "delta": 0.011,
+      "trend": "flat"
+    }
+  ]
 }

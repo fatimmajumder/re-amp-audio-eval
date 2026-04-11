@@ -1,51 +1,131 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from pathlib import Path
 
-from .evaluation import compare_runs, materialize_run, replay_run
-from .schemas import BenchmarkRun, CompareRequest, RunCreate
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="RE-AMP", version="0.1.0")
-RUNS: dict[str, BenchmarkRun] = {}
+from .repository import RunRepository
+from .schemas import (
+    BenchmarkRun,
+    CatalogResponse,
+    CompareRequest,
+    CompareResponse,
+    OverviewResponse,
+    RunCreate,
+)
+from .service import RunService
 
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.post("/runs", response_model=BenchmarkRun)
-def create_run(payload: RunCreate) -> BenchmarkRun:
-    run = materialize_run(payload)
-    RUNS[run.run_id] = run
-    return run
-
-
-@app.get("/runs/{run_id}", response_model=BenchmarkRun)
-def get_run(run_id: str) -> BenchmarkRun:
-    run = RUNS.get(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
-    return run
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+DATA_DIR = BASE_DIR / "data"
+DEFAULT_STORAGE = DATA_DIR / "runs.json"
+ARTIFACTS_DIR = DATA_DIR / "artifacts"
 
 
-@app.post("/runs/{run_id}/replay", response_model=BenchmarkRun)
-def replay_existing_run(run_id: str) -> BenchmarkRun:
-    existing = RUNS.get(run_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="run not found")
-
-    replay = replay_run(existing)
-    RUNS[replay.run_id] = replay
-    return replay
+def get_service(request: Request) -> RunService:
+    return request.app.state.run_service
 
 
-@app.post("/compare")
-def compare(payload: CompareRequest):
-    left = RUNS.get(payload.left_run_id)
-    right = RUNS.get(payload.right_run_id)
+def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True) -> FastAPI:
+    repository = RunRepository(storage_path or DEFAULT_STORAGE)
+    artifacts_root = (storage_path.parent / "artifacts") if storage_path else ARTIFACTS_DIR
+    run_service = RunService(repository, artifacts_root)
+    if seed_demo_data:
+        run_service.ensure_seed_data()
 
-    if not left or not right:
-        raise HTTPException(status_code=404, detail="one or both runs were not found")
+    app = FastAPI(
+        title="RE-AMP",
+        version="1.0.0",
+        description="Full-stack generative audio robustness evaluation dashboard.",
+    )
+    app.state.run_service = run_service
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    return compare_runs(left, right)
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/api/catalog", response_model=CatalogResponse)
+    def get_catalog(service: RunService = Depends(get_service)) -> CatalogResponse:
+        return service.get_catalog()
+
+    @app.get("/api/overview", response_model=OverviewResponse)
+    def get_overview(service: RunService = Depends(get_service)) -> OverviewResponse:
+        return service.get_overview()
+
+    @app.get("/api/runs", response_model=list[BenchmarkRun])
+    def list_runs(service: RunService = Depends(get_service)) -> list[BenchmarkRun]:
+        return service.list_runs()
+
+    @app.post("/api/runs", response_model=BenchmarkRun)
+    def create_run(
+        payload: RunCreate,
+        background_tasks: BackgroundTasks,
+        service: RunService = Depends(get_service),
+    ) -> BenchmarkRun:
+        try:
+            run = service.create_run(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        background_tasks.add_task(service.execute_run, run.run_id)
+        return run
+
+    @app.get("/api/runs/{run_id}", response_model=BenchmarkRun)
+    def get_run(run_id: str, service: RunService = Depends(get_service)) -> BenchmarkRun:
+        run = service.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="run not found")
+        return run
+
+    @app.post("/api/runs/{run_id}/replay", response_model=BenchmarkRun)
+    def replay_run(
+        run_id: str,
+        background_tasks: BackgroundTasks,
+        service: RunService = Depends(get_service),
+    ) -> BenchmarkRun:
+        try:
+            replay = service.replay_run(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        background_tasks.add_task(service.execute_run, replay.run_id)
+        return replay
+
+    @app.post("/api/compare", response_model=CompareResponse)
+    def compare_runs(
+        payload: CompareRequest,
+        service: RunService = Depends(get_service),
+    ) -> CompareResponse:
+        try:
+            return service.compare_runs(payload.left_run_id, payload.right_run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="one or both runs were not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="runs must be completed before comparison") from exc
+
+    @app.get("/api/runs/{run_id}/artifacts/{filename}")
+    def download_artifact(
+        run_id: str,
+        filename: str,
+        service: RunService = Depends(get_service),
+    ) -> FileResponse:
+        try:
+            path = service.get_artifact_path(run_id, filename)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        return FileResponse(path)
+
+    return app
+
+
+app = create_app()

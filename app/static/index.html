@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="RE-AMP is a full-stack dashboard for benchmarking generative audio models across robustness, latency, and artifact resilience."
+    />
+    <title>RE-AMP | Generative Audio Robustness Evaluation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb bg-orb-a" aria-hidden="true"></div>
+    <div class="bg-orb bg-orb-b" aria-hidden="true"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">RE</div>
+          <div>
+            <p class="eyebrow">Full-Stack Benchmarking Demo</p>
+            <h1>RE-AMP</h1>
+          </div>
+        </div>
+        <div class="topbar-links">
+          <a class="pill-link" href="https://github.com/fatimmajumder/re-amp-audio-eval" target="_blank" rel="noreferrer">GitHub Repo</a>
+          <a class="pill-link" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-panel glass-panel">
+          <div class="hero-copy">
+            <p class="eyebrow">Generative Audio Robustness Evaluation</p>
+            <h2>Benchmark models across artifact risk, timing stability, and acoustic stressors.</h2>
+            <p class="hero-text">
+              RE-AMP simulates the kind of benchmarking infrastructure used to evaluate
+              generative audio systems in production: queued runs, deterministic scoring,
+              replay, run comparison, artifact manifests, and a live dashboard layered on top.
+            </p>
+          </div>
+
+          <div class="hero-aside">
+            <div class="signal-box">
+              <span>Live dashboard state</span>
+              <strong id="hero-run-count">0 runs tracked</strong>
+            </div>
+            <div class="signal-box">
+              <span>Storage</span>
+              <strong>JSON-backed persistent registry</strong>
+            </div>
+            <div class="signal-box">
+              <span>Execution model</span>
+              <strong>Queued API + background scoring</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="metrics-grid" id="metrics-grid">
+          <article class="metric-card glass-panel">
+            <span class="metric-label">Average score</span>
+            <strong class="metric-value" id="metric-average-score">0.000</strong>
+            <p>Mean robustness across completed runs.</p>
+          </article>
+          <article class="metric-card glass-panel">
+            <span class="metric-label">Average latency</span>
+            <strong class="metric-value" id="metric-average-latency">0 ms</strong>
+            <p>Cross-run mean generation latency.</p>
+          </article>
+          <article class="metric-card glass-panel">
+            <span class="metric-label">Best model</span>
+            <strong class="metric-value" id="metric-best-model">n/a</strong>
+            <p>Top leaderboard entry by average score.</p>
+          </article>
+          <article class="metric-card glass-panel">
+            <span class="metric-label">Active queue</span>
+            <strong class="metric-value" id="metric-active-runs">0</strong>
+            <p>Queued or running evaluations right now.</p>
+          </article>
+        </section>
+
+        <section class="workspace-grid">
+          <section class="composer-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Launch a Run</p>
+                <h3>Compose a benchmark job</h3>
+              </div>
+              <span class="mono-tag">POST /api/runs</span>
+            </div>
+
+            <form id="run-form" class="run-form">
+              <label>
+                <span>Benchmark</span>
+                <select id="benchmark-select" required></select>
+              </label>
+              <label>
+                <span>Model</span>
+                <select id="model-select" required></select>
+              </label>
+              <label>
+                <span>Dataset</span>
+                <input id="dataset-input" type="text" required />
+              </label>
+              <label>
+                <span>Seed</span>
+                <input id="seed-input" type="number" min="1" step="1" value="7" required />
+              </label>
+              <label class="full-width">
+                <span>Run notes</span>
+                <textarea id="notes-input" rows="3" placeholder="What hypothesis is this run testing?"></textarea>
+              </label>
+              <div class="full-width">
+                <div class="subheader-row">
+                  <span>Scenario mix</span>
+                  <span class="mono-tag" id="scenario-count">0 selected</span>
+                </div>
+                <div id="scenario-grid" class="scenario-grid"></div>
+              </div>
+              <div class="full-width form-actions">
+                <button class="primary-button" type="submit">Queue evaluation run</button>
+                <p id="form-feedback" class="form-feedback" role="status" aria-live="polite"></p>
+              </div>
+            </form>
+          </section>
+
+          <section class="compare-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Compare</p>
+                <h3>Side-by-side run analysis</h3>
+              </div>
+              <span class="mono-tag">POST /api/compare</span>
+            </div>
+
+            <div class="compare-form">
+              <label>
+                <span>Left run</span>
+                <select id="compare-left"></select>
+              </label>
+              <label>
+                <span>Right run</span>
+                <select id="compare-right"></select>
+              </label>
+              <button class="secondary-button" type="button" id="compare-button">Compare runs</button>
+            </div>
+
+            <div id="compare-output" class="compare-output empty-state">
+              Select two completed runs to compute scenario-level deltas.
+            </div>
+          </section>
+        </section>
+
+        <section class="workspace-grid lower-grid">
+          <section class="runs-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Runs</p>
+                <h3>Live registry</h3>
+              </div>
+              <span class="mono-tag">GET /api/runs</span>
+            </div>
+
+            <div id="runs-list" class="runs-list"></div>
+          </section>
+
+          <section class="details-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Run Detail</p>
+                <h3 id="detail-title">Select a run</h3>
+              </div>
+              <span class="mono-tag" id="detail-status">waiting</span>
+            </div>
+
+            <div id="detail-content" class="detail-content empty-state">
+              Choose a run from the registry to inspect its scenario results, slice
+              scores, and generated artifacts.
+            </div>
+          </section>
+        </section>
+
+        <section class="insights-grid">
+          <section class="leaderboard-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Leaderboard</p>
+                <h3>Model averages</h3>
+              </div>
+            </div>
+            <div id="leaderboard" class="leaderboard"></div>
+          </section>
+
+          <section class="activity-panel glass-panel">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Recent Activity</p>
+                <h3>Latest runs</h3>
+              </div>
+            </div>
+            <div id="recent-runs" class="recent-runs"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

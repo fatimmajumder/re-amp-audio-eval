@@ -1,17 +1,17 @@
 {
   "benchmark_name": "audio_robustness_suite",
-  "model_name": "demo-audio-model-v1",
-  "seed": 11,
+  "model_name": "reamp-studio-beta",
+  "dataset_name": "synthetic-acoustic-suite",
+  "seed": 17,
+  "notes": "Candidate model under dialogue overlap and pitch drift stress.",
   "scenarios": [
     {
-      "name": "reverb_shift",
-      "difficulty": "medium",
-      "modality": "audio"
+      "name": "speaker_overlap",
+      "difficulty": "hard"
     },
     {
-      "name": "background_noise",
-      "difficulty": "hard",
-      "modality": "audio"
+      "name": "pitch_drift",
+      "difficulty": "medium"
     }
   ]
 }

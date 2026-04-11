@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.pytest_cache/
+data/runs.json
+data/artifacts/
