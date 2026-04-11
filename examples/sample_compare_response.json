@@ -1,0 +1,6 @@
+{
+  "left_run_id": "baseline_run",
+  "right_run_id": "candidate_run",
+  "score_delta": 0.0412,
+  "verdict": "right run materially improves robustness"
+}
