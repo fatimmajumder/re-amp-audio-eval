@@ -233,3 +233,13 @@ class CompareResponse(AppModel):
     verdict: str
     headline: str
     scenario_deltas: list[ScenarioDelta] = Field(default_factory=list)
+
+
+class SystemStatusResponse(AppModel):
+    storage_backend: Literal["json", "database"]
+    database_enabled: bool
+    inline_worker_enabled: bool
+    worker_count: int
+    worker_poll_interval_seconds: float
+    artifacts_dir: str
+    public_datasets_dir: str

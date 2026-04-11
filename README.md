@@ -5,25 +5,29 @@ systems under acoustic stress, export degradation, timing shifts, and artifact
 pressure. The repo is intentionally public-facing: it shows how an evaluation
 platform can be structured end to end without copying private employer code.
 
-This version goes beyond a thin demo. It includes a FastAPI backend, a polished
-single-page dashboard, persistent run and workspace storage, replayable
-benchmark jobs, scenario-level comparison, generated waveform and spectrogram
-artifacts, and a public dataset registry with downloader tooling.
+This version goes beyond a thin demo. It now includes a FastAPI backend, a
+polished single-page dashboard, queue-backed async workers, Postgres-ready
+persistence, replayable benchmark jobs, scenario-level comparison, generated
+waveform and spectrogram artifacts, and a public dataset registry with
+downloader tooling.
 
 ## What the project demonstrates
 
 - benchmark orchestration with queued, running, completed, replayed, and failed
   job states
+- async worker execution that can run inline for local dev or as a separate
+  worker service in deployment
 - deterministic evaluation logic so the same model, scenario mix, dataset, and
   seed produce stable outputs
-- persistent JSON-backed run history plus saved workspace lanes for different
-  evaluation goals
+- persistent run history plus saved workspace lanes for different evaluation
+  goals, with either JSON or database-backed storage
 - benchmark templates, model cards, reusable scenario library, and curated
   public dataset metadata
 - generated run artifacts including a JSON report, waveform SVG, spectrogram
   SVG, WAV preview, worker log, and manifest
 - side-by-side comparison across runs with scenario deltas and verdicts
 - recruiter-friendly frontend that makes the evaluation story easy to inspect
+- deploy-ready config for `web + worker + postgres` stacks
 
 ## Product tour
 
@@ -46,6 +50,8 @@ The frontend at `/` includes:
 
 Key routes:
 
+- `GET /api/system` returns runtime mode, worker settings, and storage
+  configuration
 - `GET /api/catalog` returns benchmark templates, models, scenarios, and public
   datasets
 - `GET /api/public-datasets` returns the dataset registry with local manifest
@@ -54,7 +60,7 @@ Key routes:
 - `POST /api/workspaces` creates a new workspace
 - `GET /api/overview` returns leaderboard and summary metrics
 - `GET /api/runs` returns all runs in reverse chronological order
-- `POST /api/runs` queues a run and executes it in a background task
+- `POST /api/runs` queues a run for worker pickup
 - `GET /api/runs/{run_id}` returns full run detail
 - `POST /api/runs/{run_id}/replay` re-runs the exact same scenario mix
 - `POST /api/compare` compares two completed runs
@@ -66,22 +72,25 @@ Key routes:
 flowchart LR
     A["Dashboard UI"] --> B["FastAPI routes"]
     B --> C["RunService"]
-    C --> D["Deterministic evaluator"]
-    C --> E["Run repository"]
-    C --> F["Workspace repository"]
-    C --> G["Public dataset registry"]
-    C --> H["Artifact writer"]
-    E --> I["data/runs.json"]
-    F --> J["data/workspaces.json"]
-    G --> K["data/public_datasets/<dataset_id>/manifest.json"]
-    H --> L["data/artifacts/<run_id>/..."]
+    C --> D["Run queue"]
+    D --> E["Inline workers or worker service"]
+    E --> F["Deterministic evaluator"]
+    F --> G["Artifact writer"]
+    C --> H["Run + workspace repositories"]
+    H --> I["JSON files or Postgres"]
+    C --> J["Public dataset registry"]
+    J --> K["data/public_datasets/<dataset_id>/manifest.json"]
+    G --> L["data/artifacts/<run_id>/..."]
 ```
 
 ## Repository layout
 
-- `app/main.py` wires the FastAPI app, routes, and static assets
+- `app/main.py` wires the FastAPI app, lifecycle, routes, and static assets
+- `app/settings.py` resolves runtime configuration from environment variables
 - `app/service.py` coordinates run creation, replay, comparison, overview, and
   workspace persistence
+- `app/repository.py` supports both JSON-backed and SQL-backed storage
+- `app/worker.py` runs the async worker loop for queued jobs
 - `app/evaluation.py` scores scenarios and builds run summaries
 - `app/artifacts.py` materializes report, SVG, WAV, log, and manifest files
 - `app/public_datasets.py` defines the public dataset registry and local
@@ -93,6 +102,7 @@ flowchart LR
   for smoke tests
 - `tests/test_api.py` covers the core API workflow
 - `examples/` contains sample payloads for runs and workspaces
+- `docker-compose.yml`, `Procfile`, and `render.yaml` ship the deployment story
 
 ## Quickstart
 
@@ -115,6 +125,39 @@ load. Runtime outputs are written to:
 - `data/workspaces.json`
 - `data/artifacts/<run_id>/`
 - `data/public_datasets/<dataset_id>/manifest.json`
+
+For local dev, RE-AMP defaults to JSON-backed storage with inline workers
+enabled. Queued jobs complete automatically inside the web process.
+
+## Production-style runtime
+
+To switch the app into database-backed mode:
+
+```bash
+cp .env.example .env
+```
+
+Then point `DATABASE_URL` at Postgres and launch the stack with inline workers
+disabled on the web service:
+
+```bash
+docker compose up --build
+```
+
+That starts:
+
+- `postgres` for run and workspace persistence
+- `web` for the FastAPI dashboard and API
+- `worker` for async benchmark execution
+
+In deployment, the worker process runs:
+
+```bash
+python scripts/run_worker.py
+```
+
+The dashboard exposes runtime details through `GET /api/system`, and the UI
+shows whether the app is in JSON mode or Postgres-backed mode.
 
 ## Pull a public dataset for testing
 
@@ -144,6 +187,23 @@ docker build -t re-amp .
 docker run --rm -p 8000:8000 re-amp
 ```
 
+## Hosted deployment
+
+This repo includes multiple deployment surfaces:
+
+- `docker-compose.yml` for a local three-service stack
+- `Procfile` for platforms that map `web` and `worker` process types
+- `render.yaml` for a one-blueprint deployment with a web service, worker
+  service, and managed Postgres
+
+For hosted deployments, set:
+
+- `DATABASE_URL`
+- `REAMP_STORAGE_BACKEND=database`
+- `REAMP_INLINE_WORKERS=false`
+- `REAMP_WORKER_COUNT=2`
+- `REAMP_WORKER_POLL_INTERVAL=1.0`
+
 ## Example run request
 
 ```json
@@ -172,6 +232,6 @@ docker run --rm -p 8000:8000 re-amp
 
 This project is framed the way strong ML infrastructure work is framed in real
 teams: not just model quality, but observability, repeatability, dataset ops,
-and decision support. It connects backend orchestration, evaluation design,
-public-data ingestion, reporting, and frontend presentation in one coherent
-story.
+decision support. It connects backend orchestration, worker design,
+database-backed persistence, public-data ingestion, reporting, and frontend
+presentation in one coherent story.

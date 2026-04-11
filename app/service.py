@@ -15,7 +15,7 @@ from .demo_data import (
 )
 from .evaluation import evaluate_payload
 from .public_datasets import build_public_datasets, get_public_dataset
-from .repository import RunRepository, WorkspaceRepository
+from .repository import RunStore, WorkspaceStore
 from .schemas import (
     BenchmarkRun,
     CompareResponse,
@@ -24,9 +24,11 @@ from .schemas import (
     RecentRunEntry,
     RunCreate,
     ScenarioDelta,
+    SystemStatusResponse,
     WorkspaceCreate,
     WorkspaceRecord,
 )
+from .settings import Settings
 
 
 def utc_now() -> datetime:
@@ -36,15 +38,17 @@ def utc_now() -> datetime:
 class RunService:
     def __init__(
         self,
-        repository: RunRepository,
-        workspace_repository: WorkspaceRepository,
+        repository: RunStore,
+        workspace_repository: WorkspaceStore,
         artifacts_root: Path,
         datasets_root: Path,
+        settings: Settings,
     ):
         self.repository = repository
         self.workspace_repository = workspace_repository
         self.artifacts_root = artifacts_root
         self.datasets_root = datasets_root
+        self.settings = settings
         self.artifacts_root.mkdir(parents=True, exist_ok=True)
         self.datasets_root.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +70,12 @@ class RunService:
         for payload in build_seed_payloads():
             run = self.create_run(payload)
             self.execute_run(run.run_id)
+
+    def recover_incomplete_runs(self) -> int:
+        recovered = self.repository.recover_incomplete_runs()
+        if recovered:
+            self._refresh_all_workspace_stats()
+        return recovered
 
     def get_catalog(self):
         return build_catalog(public_datasets=self.list_public_datasets())
@@ -95,6 +105,17 @@ class RunService:
             dataset_preferences=payload.dataset_preferences,
         )
         return self.workspace_repository.save_workspace(workspace)
+
+    def get_system_status(self) -> SystemStatusResponse:
+        return SystemStatusResponse(
+            storage_backend=self.settings.storage_backend,
+            database_enabled=self.settings.database_enabled,
+            inline_worker_enabled=self.settings.inline_worker_enabled,
+            worker_count=self.settings.worker_count,
+            worker_poll_interval_seconds=self.settings.worker_poll_interval_seconds,
+            artifacts_dir=str(self.artifacts_root),
+            public_datasets_dir=str(self.datasets_root),
+        )
 
     def list_runs(self) -> list[BenchmarkRun]:
         return self.repository.list_runs()
@@ -142,6 +163,12 @@ class RunService:
         self._refresh_workspace_stats(workspace.workspace_id)
         return run
 
+    def claim_next_run(self) -> BenchmarkRun | None:
+        claimed = self.repository.claim_next_run()
+        if claimed:
+            self._refresh_workspace_stats(claimed.workspace_id)
+        return claimed
+
     def execute_run(self, run_id: str) -> BenchmarkRun:
         existing = self.require_run(run_id)
         payload = RunCreate(
@@ -155,14 +182,17 @@ class RunService:
             scenarios=[scenario.model_copy(deep=True) for scenario in existing.scenarios],
         )
 
-        running = existing.model_copy(
-            update={
-                "status": "running",
-                "progress": 38,
-                "started_at": utc_now(),
-            },
-            deep=True,
-        )
+        running = existing
+        if existing.status != "running":
+            running = existing.model_copy(
+                update={
+                    "status": "running",
+                    "progress": 38,
+                    "started_at": utc_now(),
+                    "error_message": None,
+                },
+                deep=True,
+            )
         self.repository.save_run(running)
 
         try:

@@ -1,6 +1,7 @@
 const state = {
   catalog: null,
   overview: null,
+  system: null,
   runs: [],
   workspaces: [],
   activeRunId: null,
@@ -43,7 +44,8 @@ const elements = {
   metricAverageScore: document.getElementById("metric-average-score"),
   metricAverageLatency: document.getElementById("metric-average-latency"),
   metricBestModel: document.getElementById("metric-best-model"),
-  metricActiveRuns: document.getElementById("metric-active-runs")
+  metricActiveRuns: document.getElementById("metric-active-runs"),
+  runtimeChip: document.getElementById("runtime-chip")
 };
 
 async function fetchJson(url, options = {}) {
@@ -310,6 +312,18 @@ function renderOverview() {
           .join("");
 }
 
+function renderSystemStatus() {
+  if (!state.system || !elements.runtimeChip) {
+    return;
+  }
+
+  const backendLabel = state.system.storage_backend === "database" ? "Postgres-ready" : "JSON mode";
+  const workerLabel = state.system.inline_worker_enabled
+    ? `${state.system.worker_count} inline worker${state.system.worker_count === 1 ? "" : "s"}`
+    : `${state.system.worker_count} external worker${state.system.worker_count === 1 ? "" : "s"}`;
+  elements.runtimeChip.textContent = `${backendLabel} · ${workerLabel}`;
+}
+
 function renderRunList() {
   if (!state.runs.length) {
     elements.runsList.innerHTML =
@@ -566,15 +580,17 @@ function renderCompare() {
 }
 
 async function refreshDashboard() {
-  const [overview, runs, workspaces] = await Promise.all([
+  const [overview, runs, workspaces, system] = await Promise.all([
     fetchJson("/api/overview"),
     fetchJson("/api/runs"),
-    fetchJson("/api/workspaces")
+    fetchJson("/api/workspaces"),
+    fetchJson("/api/system")
   ]);
 
   state.overview = overview;
   state.runs = runs;
   state.workspaces = workspaces;
+  state.system = system;
 
   if (!state.activeRunId && runs.length) {
     state.activeRunId = runs[0].run_id;
@@ -585,6 +601,7 @@ async function refreshDashboard() {
   renderWorkspaceSelect();
   renderWorkspaces();
   renderOverview();
+  renderSystemStatus();
   renderRunList();
   renderRunDetail();
   renderCompare();
