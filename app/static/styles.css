@@ -534,7 +534,7 @@ textarea:focus {
   letter-spacing: 0.08em;
 }
 
-status-badge[data-status="queued"] {
+.status-badge[data-status="queued"] {
   color: var(--warning);
   border-color: rgba(255, 211, 110, 0.24);
 }
@@ -555,7 +555,7 @@ status-badge[data-status="queued"] {
   border-color: rgba(255, 110, 131, 0.24);
 }
 
-tag {
+.tag {
   color: var(--text-soft);
   border-color: rgba(255, 255, 255, 0.08);
 }
