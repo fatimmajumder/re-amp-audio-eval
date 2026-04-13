@@ -105,7 +105,14 @@ def test_create_workspace_and_run_materializes_rich_artifacts(tmp_path: Path) ->
             "audio_preview",
             "logs",
             "manifest",
+            "lineage",
+            "regression",
+            "diff",
+            "cache",
         }
+        assert run["lineage"]["prompt_schema_revision"]
+        assert "tenant_name" in run
+        assert "cache_status" in run
 
         report_url = next(
             artifact["download_url"]
@@ -116,6 +123,7 @@ def test_create_workspace_and_run_materializes_rich_artifacts(tmp_path: Path) ->
         assert report_response.status_code == 200
         assert report_response.json()["run_id"] == run_id
         assert report_response.json()["public_dataset"]["dataset_id"] == "mini_speech_commands"
+        assert report_response.json()["lineage"]["execution_fingerprint"]
 
 
 def test_replay_keeps_original_scenario_mix_and_workspace(tmp_path: Path) -> None:
@@ -177,3 +185,19 @@ def test_database_backend_executes_queued_run(tmp_path: Path) -> None:
         run = wait_for_terminal_run(client, response.json()["run_id"])
         assert run["status"] == "completed"
         assert run["summary"]["headline"]
+
+
+def test_external_worker_drain_processes_queue(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'reamp-worker.db'}"
+    with create_client(tmp_path, database_url=database_url, inline_worker_enabled=False) as client:
+        response = client.post("/api/runs", json=build_payload("audioforge-ensemble"))
+        assert response.status_code == 200
+        queued = client.get(f"/api/runs/{response.json()['run_id']}")
+        assert queued.json()["status"] == "queued"
+
+        drained = client.post("/api/workers/drain?limit=1")
+        assert drained.status_code == 200
+        assert len(drained.json()) == 1
+
+        completed = client.get(f"/api/runs/{response.json()['run_id']}")
+        assert completed.json()["status"] in {"completed", "replayed"}

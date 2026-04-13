@@ -6,6 +6,7 @@
   "score_delta": 0.0412,
   "verdict": "right run materially improves robustness",
   "headline": "Largest movement appears in speaker_overlap.",
+  "lineage_summary": "Lineage differences: prompt schema prompt-schema-2026-04 -> speech-redteam-schema-2026-04.",
   "scenario_deltas": [
     {
       "scenario_name": "speaker_overlap",
@@ -20,6 +21,32 @@
       "right_score": 0.705,
       "delta": 0.011,
       "trend": "flat"
+    }
+  ],
+  "slice_deltas": [
+    {
+      "slice_name": "separation",
+      "left_score": 0.612,
+      "right_score": 0.683,
+      "delta": 0.071,
+      "trend": "improved"
+    },
+    {
+      "slice_name": "tonality",
+      "left_score": 0.694,
+      "right_score": 0.661,
+      "delta": -0.033,
+      "trend": "regressed"
+    }
+  ],
+  "regression_alerts": [
+    {
+      "slice_name": "tonality",
+      "previous_score": 0.694,
+      "current_score": 0.661,
+      "delta": -0.033,
+      "severity": "low",
+      "note": "tonality regressed when moving from reamp-studio-alpha to reamp-studio-beta."
     }
   ]
 }

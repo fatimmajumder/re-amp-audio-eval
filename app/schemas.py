@@ -11,6 +11,9 @@ Difficulty = Literal["easy", "medium", "hard"]
 Modality = Literal["audio", "multimodal"]
 DatasetAccessMode = Literal["direct", "request", "streaming"]
 DatasetAvailabilityStatus = Literal["remote", "downloaded"]
+Trend = Literal["stable", "watch", "risk"]
+RegressionSeverity = Literal["low", "medium", "high"]
+Environment = Literal["dev", "staging", "prod"]
 
 
 def utc_now() -> datetime:
@@ -61,10 +64,16 @@ class WorkspaceCreate(AppModel):
     name: str
     description: str
     owner: str = "RE-AMP Team"
+    tenant_name: str = "Arthur Labs"
+    tenant_slug: str = "arthur-labs"
+    project_name: str = "Audio Red Team"
+    project_slug: str = "audio-redteam"
     focus_areas: list[str] = Field(default_factory=list)
     default_benchmark: str = ""
     default_model: str = ""
     dataset_preferences: list[str] = Field(default_factory=list)
+    default_prompt_schema: str = "prompt-schema-2026-04"
+    default_judge_configuration: str = "aurora-judge-v4"
 
 
 class WorkspaceRecord(AppModel):
@@ -72,10 +81,16 @@ class WorkspaceRecord(AppModel):
     name: str
     description: str
     owner: str = "RE-AMP Team"
+    tenant_name: str = "Arthur Labs"
+    tenant_slug: str = "arthur-labs"
+    project_name: str = "Audio Red Team"
+    project_slug: str = "audio-redteam"
     focus_areas: list[str] = Field(default_factory=list)
     default_benchmark: str = ""
     default_model: str = ""
     dataset_preferences: list[str] = Field(default_factory=list)
+    default_prompt_schema: str = "prompt-schema-2026-04"
+    default_judge_configuration: str = "aurora-judge-v4"
     created_at: datetime = Field(default_factory=utc_now)
     last_run_at: datetime | None = None
     run_count: int = 0
@@ -89,6 +104,10 @@ class RunCreate(AppModel):
     notes: str = ""
     workspace_id: str | None = None
     public_dataset_id: str | None = None
+    baseline_run_id: str | None = None
+    prompt_schema_revision: str | None = None
+    tokenizer_revision: str | None = None
+    judge_configuration: str | None = None
     scenarios: list[BenchmarkScenario] = Field(default_factory=list)
 
 
@@ -109,12 +128,53 @@ class SliceScore(AppModel):
     slice_name: str
     score: float
     failure_rate: float
-    trend: Literal["stable", "watch", "risk"]
+    trend: Trend
+
+
+class RunLineage(AppModel):
+    dataset_revision: str
+    dataset_manifest: str
+    prompt_schema_revision: str
+    tokenizer_revision: str
+    model_artifact: str
+    judge_configuration: str
+    scoring_revision: str
+    execution_fingerprint: str
+    lineage_tags: list[str] = Field(default_factory=list)
+
+
+class ArtifactCacheStatus(AppModel):
+    cache_namespace: str
+    cache_key: str
+    hit_ratio: float
+    restored_artifacts: int
+    reused_judge_calls: int
+    estimated_gpu_seconds_saved: float
+
+
+class RegressionAlert(AppModel):
+    slice_name: str
+    previous_score: float
+    current_score: float
+    delta: float
+    severity: RegressionSeverity
+    note: str
 
 
 class ArtifactRecord(AppModel):
     label: str
-    artifact_type: Literal["report", "spectrogram", "waveform", "audio_preview", "logs", "manifest"]
+    artifact_type: Literal[
+        "report",
+        "spectrogram",
+        "waveform",
+        "audio_preview",
+        "logs",
+        "manifest",
+        "lineage",
+        "regression",
+        "diff",
+        "cache",
+    ]
     path: str
     download_url: str = ""
     size_kb: float
@@ -130,6 +190,8 @@ class RunSummary(AppModel):
     strongest_scenario: str
     weakest_scenario: str
     headline: str
+    regression_alert_count: int = 0
+    cache_hit_ratio: float = 0.0
 
 
 class BenchmarkRun(AppModel):
@@ -141,8 +203,14 @@ class BenchmarkRun(AppModel):
     notes: str = ""
     workspace_id: str = "core-audio-lab"
     workspace_name: str = "Core Audio Lab"
+    tenant_slug: str = "arthur-labs"
+    tenant_name: str = "Arthur Labs"
+    project_slug: str = "audio-redteam"
+    project_name: str = "Audio Red Team"
+    environment: Environment = "staging"
     public_dataset_id: str | None = None
     dataset_source_url: str | None = None
+    baseline_run_id: str | None = None
     scenarios: list[BenchmarkScenario] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
@@ -155,6 +223,9 @@ class BenchmarkRun(AppModel):
     summary: RunSummary | None = None
     artifacts: list[ArtifactRecord] = Field(default_factory=list)
     slices: list[SliceScore] = Field(default_factory=list)
+    lineage: RunLineage | None = None
+    cache_status: ArtifactCacheStatus | None = None
+    regressions: list[RegressionAlert] = Field(default_factory=list)
 
 
 class BenchmarkTemplate(AppModel):
@@ -224,6 +295,14 @@ class ScenarioDelta(AppModel):
     trend: Literal["improved", "regressed", "flat"]
 
 
+class SliceDelta(AppModel):
+    slice_name: str
+    left_score: float
+    right_score: float
+    delta: float
+    trend: Literal["improved", "regressed", "flat"]
+
+
 class CompareResponse(AppModel):
     left_run_id: str
     right_run_id: str
@@ -233,3 +312,19 @@ class CompareResponse(AppModel):
     verdict: str
     headline: str
     scenario_deltas: list[ScenarioDelta] = Field(default_factory=list)
+    slice_deltas: list[SliceDelta] = Field(default_factory=list)
+    regression_alerts: list[RegressionAlert] = Field(default_factory=list)
+    lineage_summary: str = ""
+
+
+class SystemStatus(AppModel):
+    app_version: str
+    storage_backend: Literal["json", "database"]
+    database_enabled: bool
+    database_url_hint: str | None = None
+    inline_worker_enabled: bool
+    worker_count: int
+    multi_tenant_enabled: bool = True
+    cache_enabled: bool = True
+    artifact_root: str
+    dataset_root: str

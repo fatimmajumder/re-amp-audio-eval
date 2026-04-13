@@ -2,5 +2,9 @@
   "name": "Speech QA Sprint",
   "description": "Short-turn workspace for overlap and noisy speech regressions.",
   "owner": "Fatim Majumder",
+  "tenant_name": "Arthur Labs",
+  "tenant_slug": "arthur-labs",
+  "project_name": "Speech Red Team",
+  "project_slug": "speech-red-team",
   "focus_areas": ["speaker overlap", "background noise", "latency"]
 }

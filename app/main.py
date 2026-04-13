@@ -15,10 +15,12 @@ from .schemas import (
     OverviewResponse,
     PublicDataset,
     RunCreate,
+    SystemStatus,
     WorkspaceCreate,
     WorkspaceRecord,
 )
 from .service import RunService
+from .settings import AppSettings
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -33,25 +35,42 @@ def get_service(request: Request) -> RunService:
     return request.app.state.run_service
 
 
-def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True) -> FastAPI:
+def get_settings(request: Request) -> AppSettings:
+    return request.app.state.settings
+
+
+def create_app(
+    storage_path: Path | None = None,
+    *,
+    seed_demo_data: bool = True,
+    database_url: str | None = None,
+    inline_worker_enabled: bool | None = None,
+    worker_count: int | None = None,
+) -> FastAPI:
     run_storage_path = storage_path or DEFAULT_STORAGE
     workspace_storage_path = run_storage_path.parent / "workspaces.json" if storage_path else DEFAULT_WORKSPACE_STORAGE
     artifacts_root = (run_storage_path.parent / "artifacts") if storage_path else ARTIFACTS_DIR
     datasets_root = (run_storage_path.parent / "public_datasets") if storage_path else PUBLIC_DATASETS_DIR
+    settings = AppSettings.from_inputs(
+        database_url=database_url,
+        inline_worker_enabled=inline_worker_enabled,
+        worker_count=worker_count,
+    )
 
-    repository = RunRepository(run_storage_path)
-    workspace_repository = WorkspaceRepository(workspace_storage_path)
-    run_service = RunService(repository, workspace_repository, artifacts_root, datasets_root)
+    repository = RunRepository(run_storage_path, database_url=settings.database_url)
+    workspace_repository = WorkspaceRepository(workspace_storage_path, database_url=settings.database_url)
+    run_service = RunService(repository, workspace_repository, artifacts_root, datasets_root, settings)
     run_service.ensure_seed_workspaces()
     if seed_demo_data:
         run_service.ensure_seed_data()
 
     app = FastAPI(
         title="RE-AMP",
-        version="2.0.0",
+        version=settings.app_version,
         description="Full-stack generative audio robustness evaluation dashboard.",
     )
     app.state.run_service = run_service
+    app.state.settings = settings
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -61,6 +80,13 @@ def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True)
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/system", response_model=SystemStatus)
+    def get_system(
+        service: RunService = Depends(get_service),
+        _settings: AppSettings = Depends(get_settings),
+    ) -> SystemStatus:
+        return service.get_system_status()
 
     @app.get("/api/catalog", response_model=CatalogResponse)
     def get_catalog(service: RunService = Depends(get_service)) -> CatalogResponse:
@@ -97,10 +123,27 @@ def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True)
     ) -> BenchmarkRun:
         try:
             run = service.create_run(payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="baseline run not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        background_tasks.add_task(service.execute_run, run.run_id)
+
+        if service.settings.inline_worker_enabled:
+            background_tasks.add_task(service.execute_run, run.run_id)
         return run
+
+    @app.post("/api/workers/drain", response_model=list[BenchmarkRun])
+    def drain_worker_queue(
+        limit: int = 1,
+        service: RunService = Depends(get_service),
+    ) -> list[BenchmarkRun]:
+        executed: list[BenchmarkRun] = []
+        for _ in range(max(1, min(limit, 8))):
+            run = service.execute_next_queued_run()
+            if not run:
+                break
+            executed.append(run)
+        return executed
 
     @app.get("/api/runs/{run_id}", response_model=BenchmarkRun)
     def get_run(run_id: str, service: RunService = Depends(get_service)) -> BenchmarkRun:
@@ -122,7 +165,8 @@ def create_app(storage_path: Path | None = None, *, seed_demo_data: bool = True)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        background_tasks.add_task(service.execute_run, replay.run_id)
+        if service.settings.inline_worker_enabled:
+            background_tasks.add_task(service.execute_run, replay.run_id)
         return replay
 
     @app.post("/api/compare", response_model=CompareResponse)

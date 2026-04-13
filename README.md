@@ -6,10 +6,11 @@ pressure. The repo is intentionally public-facing: it shows how an evaluation
 platform can be structured end to end without copying private employer code.
 
 This version goes beyond a thin demo. It now includes a FastAPI backend, a
-polished single-page dashboard, queue-backed async workers, Postgres-ready
-persistence, replayable benchmark jobs, scenario-level comparison, generated
-waveform and spectrogram artifacts, and a public dataset registry with
-downloader tooling.
+polished single-page dashboard, queue-backed async workers, deterministic run
+lineage, slice-level regression detection, cache-aware replay metadata,
+database-backed persistence, replayable benchmark jobs, scenario-level
+comparison, generated waveform and spectrogram artifacts, and a public dataset
+registry with downloader tooling.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/fatimmajumder/re-amp-audio-eval)
 
@@ -19,17 +20,26 @@ downloader tooling.
   job states
 - async worker execution that can run inline for local dev or as a separate
   worker service in deployment
-- deterministic evaluation logic so the same model, scenario mix, dataset, and
-  seed produce stable outputs
+- deterministic evaluation logic so the same model, scenario mix, dataset,
+  prompt schema, tokenizer revision, and judge configuration produce stable
+  outputs
 - persistent run history plus saved workspace lanes for different evaluation
-  goals, with either JSON or database-backed storage
+  goals, with either JSON or sqlite-backed database storage
+- multi-tenant workspace context so runs are attached to a tenant, project, and
+  evaluation lane instead of just a flat list
+- slice-level regression alerts relative to a baseline run, with run-diff and
+  lineage artifacts for auditability
+- artifact cache metadata that shows estimated replay savings and judge-call
+  reuse for repeated experiment loops
 - benchmark templates, model cards, reusable scenario library, and curated
   public dataset metadata
 - generated run artifacts including a JSON report, waveform SVG, spectrogram
-  SVG, WAV preview, worker log, and manifest
-- side-by-side comparison across runs with scenario deltas and verdicts
+  SVG, WAV preview, worker log, manifest, lineage record, regression report,
+  diff summary, and cache trace
+- side-by-side comparison across runs with scenario deltas, slice deltas,
+  verdicts, and lineage summaries
 - recruiter-friendly frontend that makes the evaluation story easy to inspect
-- deploy-ready config for `web + worker + postgres` stacks
+- deploy-ready config for local `web + worker` stacks and fast hosted demos
 
 ## Product tour
 
@@ -45,8 +55,8 @@ The frontend at `/` includes:
 - a public dataset registry with official source links and local-download status
 - saved workspaces with persistent run counts
 - a run registry with progress and replay controls
-- a detail panel with scenario results, slice scores, inline media previews, and
-  downloadable artifacts
+- a detail panel with scenario results, slice scores, deterministic lineage,
+  cache reuse signals, inline media previews, and downloadable artifacts
 - a comparison panel for completed runs
 - leaderboard and recent activity sections
 
@@ -65,6 +75,7 @@ Key routes:
 - `GET /api/overview` returns leaderboard and summary metrics
 - `GET /api/runs` returns all runs in reverse chronological order
 - `POST /api/runs` queues a run for worker pickup
+- `POST /api/workers/drain` lets an external worker process drain queued runs
 - `GET /api/runs/{run_id}` returns full run detail
 - `POST /api/runs/{run_id}/replay` re-runs the exact same scenario mix
 - `POST /api/compare` compares two completed runs
@@ -79,12 +90,13 @@ flowchart LR
     C --> D["Run queue"]
     D --> E["Inline workers or worker service"]
     E --> F["Deterministic evaluator"]
-    F --> G["Artifact writer"]
-    C --> H["Run + workspace repositories"]
-    H --> I["JSON files or Postgres"]
-    C --> J["Public dataset registry"]
-    J --> K["data/public_datasets/<dataset_id>/manifest.json"]
-    G --> L["data/artifacts/<run_id>/..."]
+    F --> G["Lineage + cache planner"]
+    G --> H["Artifact writer"]
+    C --> I["Run + workspace repositories"]
+    I --> J["JSON files or sqlite database"]
+    C --> K["Public dataset registry"]
+    K --> L["data/public_datasets/<dataset_id>/manifest.json"]
+    H --> M["data/artifacts/<run_id>/..."]
 ```
 
 ## Repository layout
@@ -93,10 +105,11 @@ flowchart LR
 - `app/settings.py` resolves runtime configuration from environment variables
 - `app/service.py` coordinates run creation, replay, comparison, overview, and
   workspace persistence
-- `app/repository.py` supports both JSON-backed and SQL-backed storage
+- `app/repository.py` supports both JSON-backed and sqlite-backed storage
 - `app/worker.py` runs the async worker loop for queued jobs
 - `app/evaluation.py` scores scenarios and builds run summaries
-- `app/artifacts.py` materializes report, SVG, WAV, log, and manifest files
+- `app/artifacts.py` materializes report, SVG, WAV, lineage, diff, cache, log,
+  and manifest files
 - `app/public_datasets.py` defines the public dataset registry and local
   manifest hydration
 - `app/demo_data.py` seeds benchmark templates, scenarios, model cards, and
@@ -140,26 +153,27 @@ On first load, the dashboard also includes:
 - `Launch guided demo run` to queue a speech robustness benchmark immediately
 - `Load speech red-team lane` to preload the most compelling workspace defaults
 
-## Production-style runtime
+## Database-backed runtime
 
-To switch the app into database-backed mode:
+To switch the app into sqlite-backed database mode:
 
 ```bash
 cp .env.example .env
 ```
 
-Then point `DATABASE_URL` at Postgres and launch the stack with inline workers
-disabled on the web service:
+Then point `DATABASE_URL` at a sqlite URL and launch the stack with inline
+workers disabled on the web service:
 
 ```bash
+export DATABASE_URL=sqlite:///data/reamp.db
 docker compose up --build
 ```
 
 That starts:
 
-- `postgres` for run and workspace persistence
 - `web` for the FastAPI dashboard and API
 - `worker` for async benchmark execution
+- a shared sqlite database file under `data/reamp.db`
 
 In deployment, the worker process runs:
 
@@ -168,7 +182,7 @@ python scripts/run_worker.py
 ```
 
 The dashboard exposes runtime details through `GET /api/system`, and the UI
-shows whether the app is in JSON mode or Postgres-backed mode.
+shows whether the app is in JSON mode or database-backed mode.
 
 ## Pull a public dataset for testing
 
@@ -202,10 +216,10 @@ docker run --rm -p 8000:8000 re-amp
 
 This repo includes multiple deployment surfaces:
 
-- `docker-compose.yml` for a local three-service stack
+- `docker-compose.yml` for a local `web + worker` stack
 - `Procfile` for platforms that map `web` and `worker` process types
 - `render.yaml` for the easiest public demo deployment on Render
-- `render.fullstack.yaml` for a `web + worker + postgres` Render topology
+- `render.fullstack.yaml` as a blueprint sketch for heavier deployments
 
 ### Fastest path to a public demo URL
 
@@ -230,19 +244,23 @@ python scripts/smoke_hosted_demo.py https://your-app.onrender.com
 ### Full-stack Render topology
 
 If you want the heavier cloud setup, use `render.fullstack.yaml` instead. That
-blueprint provisions:
+blueprint sketch keeps the split-service shape visible:
 
 - a web service
 - a dedicated worker service
-- a managed Postgres instance
+- explicit worker env vars
 
-For the full-stack deployment, set:
+For a real split-service deployment you would supply:
 
-- `DATABASE_URL`
+- `DATABASE_URL` or another shared persistence layer
 - `REAMP_STORAGE_BACKEND=database`
 - `REAMP_INLINE_WORKERS=false`
 - `REAMP_WORKER_COUNT=2`
 - `REAMP_WORKER_POLL_INTERVAL=1.0`
+
+The public repo focuses on a portfolio-safe sqlite-backed implementation for the
+database mode, so `render.yaml` remains the best deploy path for a quick hosted
+demo.
 
 Render’s Docker blueprint fields used here map cleanly to the app:
 

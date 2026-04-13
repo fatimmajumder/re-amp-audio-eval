@@ -6,7 +6,17 @@ import struct
 import wave
 from pathlib import Path
 
-from .schemas import ArtifactRecord, BenchmarkRun, PublicDataset, RunSummary, ScenarioResult, SliceScore
+from .schemas import (
+    ArtifactCacheStatus,
+    ArtifactRecord,
+    BenchmarkRun,
+    PublicDataset,
+    RegressionAlert,
+    RunLineage,
+    RunSummary,
+    ScenarioResult,
+    SliceScore,
+)
 
 SAMPLE_RATE = 16_000
 PREVIEW_DURATION_SECONDS = 2.6
@@ -21,6 +31,10 @@ def write_run_artifacts(
     slices: list[SliceScore],
     *,
     public_dataset: PublicDataset | None = None,
+    lineage: RunLineage | None = None,
+    cache_status: ArtifactCacheStatus | None = None,
+    regressions: list[RegressionAlert] | None = None,
+    baseline_run: BenchmarkRun | None = None,
 ) -> list[ArtifactRecord]:
     run_dir = root / run.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -31,7 +45,12 @@ def write_run_artifacts(
     audio_preview_path = run_dir / "audio_preview.wav"
     logs_path = run_dir / "worker.log"
     manifest_path = run_dir / "manifest.json"
+    lineage_path = run_dir / "lineage.json"
+    regression_path = run_dir / "slice_regressions.json"
+    diff_path = run_dir / "run_diff.json"
+    cache_path = run_dir / "cache_trace.json"
 
+    regressions = regressions or []
     signal = _build_preview_signal(run, results)
 
     report_payload = {
@@ -39,6 +58,10 @@ def write_run_artifacts(
         "workspace": {
             "workspace_id": run.workspace_id,
             "workspace_name": run.workspace_name,
+            "tenant_slug": run.tenant_slug,
+            "tenant_name": run.tenant_name,
+            "project_slug": run.project_slug,
+            "project_name": run.project_name,
         },
         "benchmark_name": run.benchmark_name,
         "model_name": run.model_name,
@@ -50,6 +73,9 @@ def write_run_artifacts(
         "summary": summary.model_dump(mode="json"),
         "results": [result.model_dump(mode="json") for result in results],
         "slices": [slice_score.model_dump(mode="json") for slice_score in slices],
+        "lineage": lineage.model_dump(mode="json") if lineage else None,
+        "cache_status": cache_status.model_dump(mode="json") if cache_status else None,
+        "regressions": [item.model_dump(mode="json") for item in regressions],
         "public_dataset": public_dataset.model_dump(mode="json") if public_dataset else None,
     }
     report_path.write_text(json.dumps(report_payload, indent=2))
@@ -57,7 +83,52 @@ def write_run_artifacts(
     spectrogram_path.write_text(_build_spectrogram_svg(run, signal, results))
     waveform_path.write_text(_build_waveform_svg(run, signal, summary))
     _write_preview_audio(audio_preview_path, signal)
-    logs_path.write_text(_build_worker_log(run, summary, results, public_dataset))
+    logs_path.write_text(_build_worker_log(run, summary, results, public_dataset, cache_status))
+    lineage_path.write_text(
+        json.dumps(
+            {
+                "run_id": run.run_id,
+                "baseline_run_id": baseline_run.run_id if baseline_run else None,
+                "lineage": lineage.model_dump(mode="json") if lineage else None,
+            },
+            indent=2,
+        )
+    )
+    regression_path.write_text(
+        json.dumps(
+            {
+                "run_id": run.run_id,
+                "baseline_run_id": baseline_run.run_id if baseline_run else None,
+                "alert_count": len(regressions),
+                "alerts": [item.model_dump(mode="json") for item in regressions],
+            },
+            indent=2,
+        )
+    )
+    diff_path.write_text(
+        json.dumps(
+            {
+                "run_id": run.run_id,
+                "baseline_run_id": baseline_run.run_id if baseline_run else None,
+                "baseline_model_name": baseline_run.model_name if baseline_run else None,
+                "baseline_summary": baseline_run.summary.model_dump(mode="json") if baseline_run and baseline_run.summary else None,
+                "current_summary": summary.model_dump(mode="json"),
+                "slice_count": len(slices),
+                "scenario_count": len(results),
+            },
+            indent=2,
+        )
+    )
+    cache_path.write_text(
+        json.dumps(
+            {
+                "run_id": run.run_id,
+                "cache_status": cache_status.model_dump(mode="json") if cache_status else None,
+                "lineage_fingerprint": lineage.execution_fingerprint if lineage else None,
+            },
+            indent=2,
+        )
+    )
 
     manifest_path.write_text(
         json.dumps(
@@ -73,6 +144,10 @@ def write_run_artifacts(
                     audio_preview_path.name,
                     logs_path.name,
                     manifest_path.name,
+                    lineage_path.name,
+                    regression_path.name,
+                    diff_path.name,
+                    cache_path.name,
                 ],
                 "result_count": len(results),
                 "slice_count": len(slices),
@@ -125,6 +200,34 @@ def write_run_artifacts(
             artifact_type="manifest",
             path=manifest_path,
             description="Index of generated files for downstream reporting and QA flows.",
+        ),
+        _artifact_record(
+            run_id=run.run_id,
+            label="Lineage record",
+            artifact_type="lineage",
+            path=lineage_path,
+            description="Dataset, prompt schema, tokenizer, and judge configuration for exact replay.",
+        ),
+        _artifact_record(
+            run_id=run.run_id,
+            label="Slice regression report",
+            artifact_type="regression",
+            path=regression_path,
+            description="Slice-level regressions relative to the chosen baseline run.",
+        ),
+        _artifact_record(
+            run_id=run.run_id,
+            label="Run diff summary",
+            artifact_type="diff",
+            path=diff_path,
+            description="Compact before/after summary for baseline-aware comparison flows.",
+        ),
+        _artifact_record(
+            run_id=run.run_id,
+            label="Cache trace",
+            artifact_type="cache",
+            path=cache_path,
+            description="Artifact and judge-call reuse metadata for repeat experiments.",
         ),
     ]
 
@@ -289,15 +392,26 @@ def _build_worker_log(
     summary: RunSummary,
     results: list[ScenarioResult],
     public_dataset: PublicDataset | None,
+    cache_status: ArtifactCacheStatus | None,
 ) -> str:
     lines = [
-        f"[queue] accepted run={run.run_id} workspace={run.workspace_id} benchmark={run.benchmark_name} model={run.model_name}",
-        f"[config] dataset={run.dataset_name} public_dataset={run.public_dataset_id or 'none'} seed={run.seed} scenarios={len(run.scenarios)}",
+        f"[queue] accepted run={run.run_id} tenant={run.tenant_slug} project={run.project_slug} workspace={run.workspace_id}",
+        f"[config] benchmark={run.benchmark_name} model={run.model_name} dataset={run.dataset_name} seed={run.seed} scenarios={len(run.scenarios)}",
     ]
     if public_dataset:
         lines.append(
             f"[dataset] source={public_dataset.source_url} access_mode={public_dataset.access_mode} "
             f"local_status={public_dataset.availability.status}"
+        )
+    if run.lineage:
+        lines.append(
+            f"[lineage] prompt_schema={run.lineage.prompt_schema_revision} tokenizer={run.lineage.tokenizer_revision} "
+            f"judge={run.lineage.judge_configuration} fingerprint={run.lineage.execution_fingerprint[:12]}"
+        )
+    if cache_status:
+        lines.append(
+            f"[cache] namespace={cache_status.cache_namespace} key={cache_status.cache_key} "
+            f"hit_ratio={cache_status.hit_ratio} reused_judge_calls={cache_status.reused_judge_calls}"
         )
     lines.append(
         f"[summary] aggregate_score={summary.aggregate_score} average_latency_ms={summary.average_latency_ms}"

@@ -626,6 +626,12 @@ textarea:focus {
   margin-bottom: 12px;
 }
 
+.compare-lineage {
+  margin: 0 0 12px;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
 .compare-summary strong {
   font-size: 1.2rem;
 }
@@ -668,6 +674,10 @@ textarea:focus {
 
 .summary-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.detail-section {
   margin-bottom: 14px;
 }
 

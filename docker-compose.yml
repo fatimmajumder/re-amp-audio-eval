@@ -1,0 +1,22 @@
+services:
+  web:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:///data/reamp.db
+      REAMP_INLINE_WORKERS: "false"
+      REAMP_WORKER_COUNT: "1"
+    volumes:
+      - ./data:/app/data
+
+  worker:
+    build: .
+    command: python scripts/run_worker.py
+    environment:
+      DATABASE_URL: sqlite:///data/reamp.db
+      REAMP_INLINE_WORKERS: "false"
+      REAMP_WORKER_COUNT: "1"
+    volumes:
+      - ./data:/app/data
